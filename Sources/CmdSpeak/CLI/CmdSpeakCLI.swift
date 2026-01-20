@@ -165,17 +165,13 @@ struct Run: AsyncParsableCommand {
         print("Ready.")
         print("Double-tap Right Cmd to dictate. Ctrl+C to quit.")
         print("")
+        print("Note: Disable macOS Dictation shortcut in System Settings > Keyboard > Dictation")
 
-        let signalSource = DispatchSource.makeSignalSource(signal: SIGINT, queue: .main)
-        signalSource.setEventHandler {
-            print("\nShutting down...")
-            controller.stop()
+        signal(SIGINT) { _ in
             Darwin.exit(0)
         }
-        signalSource.resume()
-        signal(SIGINT, SIG_IGN)
 
-        await withCheckedContinuation { (_: CheckedContinuation<Void, Never>) in
-        }
+        // Keep running
+        dispatchMain()
     }
 }
