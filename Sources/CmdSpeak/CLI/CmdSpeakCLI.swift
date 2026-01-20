@@ -130,6 +130,7 @@ struct Run: AsyncParsableCommand {
         abstract: "Run CmdSpeak (default)"
     )
 
+    @MainActor
     func run() async throws {
         print("CmdSpeak v\(CmdSpeakCore.version)")
         print("Loading model...")
@@ -171,7 +172,6 @@ struct Run: AsyncParsableCommand {
             Darwin.exit(0)
         }
 
-        // Keep running
         dispatchMain()
     }
 }
