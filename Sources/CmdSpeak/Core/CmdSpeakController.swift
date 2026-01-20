@@ -17,32 +17,24 @@ public final class CmdSpeakController: @unchecked Sendable {
     public var onStateChange: ((State) -> Void)?
 
     private let config: Config
-    private let audioCapture: AudioCapturing
-    private let vad: VoiceActivityDetecting
-    private let engine: TranscriptionEngine
-    private let injector: TextInjecting
-    private let hotkeyManager: HotkeyManaging
+    private let audioCapture: AudioCaptureManager
+    private let vad: VoiceActivityDetector
+    private let engine: WhisperKitEngine
+    private let injector: TextInjector
+    private let hotkeyManager: HotkeyManager
 
     private var audioBuffer: [Float] = []
-    private let bufferLock = NSLock()
+    private let bufferQueue = DispatchQueue(label: "com.cmdspeak.buffer", qos: .userInteractive)
 
-    public init(
-        config: Config = Config.default,
-        audioCapture: AudioCapturing? = nil,
-        vad: VoiceActivityDetecting? = nil,
-        engine: TranscriptionEngine? = nil,
-        injector: TextInjecting? = nil,
-        hotkeyManager: HotkeyManaging? = nil
-    ) {
+    public init(config: Config = Config.default) {
         self.config = config
-
-        self.audioCapture = audioCapture ?? AudioCaptureManager()
-        self.vad = vad ?? VoiceActivityDetector(
+        self.audioCapture = AudioCaptureManager()
+        self.vad = VoiceActivityDetector(
             silenceDuration: TimeInterval(config.audio.silenceThresholdMs) / 1000.0
         )
-        self.engine = engine ?? WhisperKitEngine(modelName: config.model.name)
-        self.injector = injector ?? TextInjector()
-        self.hotkeyManager = hotkeyManager ?? HotkeyManager(
+        self.engine = WhisperKitEngine(modelName: config.model.name)
+        self.injector = TextInjector()
+        self.hotkeyManager = HotkeyManager(
             doubleTapInterval: TimeInterval(config.hotkey.intervalMs) / 1000.0
         )
 
@@ -50,22 +42,19 @@ public final class CmdSpeakController: @unchecked Sendable {
     }
 
     private func setupCallbacks() {
-        var mutableHotkey = hotkeyManager
-        mutableHotkey.onHotkeyTriggered = { [weak self] in
+        hotkeyManager.onHotkeyTriggered = { [weak self] in
             Task { @MainActor in
                 await self?.handleHotkeyTriggered()
             }
         }
 
-        var mutableVAD = vad
-        mutableVAD.onSpeechEnd = { [weak self] in
+        vad.onSpeechEnd = { [weak self] in
             Task {
                 await self?.handleSpeechEnd()
             }
         }
 
-        var mutableAudio = audioCapture
-        mutableAudio.onAudioBuffer = { [weak self] buffer in
+        audioCapture.onAudioBuffer = { [weak self] buffer in
             self?.handleAudioBuffer(buffer)
         }
     }
@@ -79,7 +68,9 @@ public final class CmdSpeakController: @unchecked Sendable {
     public func stop() {
         audioCapture.stopRecording()
         hotkeyManager.stop()
-        engine.unload()
+        Task {
+            await engine.unload()
+        }
         setState(.idle)
     }
 
@@ -116,11 +107,11 @@ public final class CmdSpeakController: @unchecked Sendable {
         guard let channelData = buffer.floatChannelData?[0] else { return }
         let frameLength = Int(buffer.frameLength)
 
-        bufferLock.lock()
-        for i in 0..<frameLength {
-            audioBuffer.append(channelData[i])
+        bufferQueue.sync {
+            for i in 0..<frameLength {
+                audioBuffer.append(channelData[i])
+            }
         }
-        bufferLock.unlock()
 
         vad.process(buffer: buffer)
     }
@@ -134,9 +125,10 @@ public final class CmdSpeakController: @unchecked Sendable {
     private func processAndInject() async {
         setState(.processing)
 
-        bufferLock.lock()
-        let samples = audioBuffer
-        bufferLock.unlock()
+        var samples: [Float] = []
+        bufferQueue.sync {
+            samples = audioBuffer
+        }
 
         guard !samples.isEmpty else {
             setState(.idle)
@@ -164,9 +156,9 @@ public final class CmdSpeakController: @unchecked Sendable {
     }
 
     private func clearBuffer() {
-        bufferLock.lock()
-        audioBuffer.removeAll()
-        bufferLock.unlock()
+        bufferQueue.sync {
+            audioBuffer.removeAll()
+        }
     }
 
     private func setState(_ newState: State) {

@@ -14,12 +14,12 @@ public struct TranscriptionResult: Sendable {
 }
 
 /// Protocol for transcription engines.
-public protocol TranscriptionEngine: AnyObject, Sendable {
+public protocol TranscriptionEngine: Actor {
     var isReady: Bool { get }
 
     func initialize() async throws
     func transcribe(audioSamples: [Float]) async throws -> TranscriptionResult
-    func unload()
+    func unload() async
 }
 
 /// Errors that can occur during transcription.

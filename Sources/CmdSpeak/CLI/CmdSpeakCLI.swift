@@ -1,4 +1,5 @@
 import ArgumentParser
+import AVFoundation
 import CmdSpeakCore
 import Foundation
 
@@ -33,7 +34,7 @@ struct Status: ParsableCommand {
         let injector = TextInjector()
         let hasAccessibility = injector.checkAccessibilityPermission()
         print("Permissions:")
-        print("  Accessibility: \(hasAccessibility ? "✓" : "✗ (required)")")
+        print("  Accessibility: \(hasAccessibility ? "granted" : "not granted (required)")")
 
         if !hasAccessibility {
             print("")
@@ -42,7 +43,7 @@ struct Status: ParsableCommand {
     }
 }
 
-struct TestMic: AsyncParsableCommand {
+struct TestMic: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "test-mic",
         abstract: "Test microphone input"
@@ -51,15 +52,21 @@ struct TestMic: AsyncParsableCommand {
     @Option(name: .shortAndLong, help: "Duration in seconds")
     var duration: Int = 3
 
-    func run() async throws {
+    func run() throws {
         print("Testing microphone for \(duration) seconds...")
-        print("Speak now!")
+        print("Note: Terminal.app must have microphone permission in System Settings.")
+        print("Speak now...")
         print("")
 
-        let audioCapture = AudioCaptureManager()
-        var maxLevel: Float = 0
+        let engine = AVAudioEngine()
+        let inputNode = engine.inputNode
+        let format = inputNode.outputFormat(forBus: 0)
 
-        audioCapture.onAudioBuffer = { buffer in
+        var maxLevel: Float = 0
+        var bufferCount = 0
+
+        inputNode.installTap(onBus: 0, bufferSize: 4096, format: format) { buffer, _ in
+            bufferCount += 1
             guard let data = buffer.floatChannelData?[0] else { return }
             let frameLength = Int(buffer.frameLength)
 
@@ -74,26 +81,34 @@ struct TestMic: AsyncParsableCommand {
             }
 
             let bars = Int(avg * 100)
-            let barString = String(repeating: "█", count: min(bars, 50))
-            print("\r\(barString.padding(toLength: 50, withPad: " ", startingAt: 0))", terminator: "")
+            let barString = String(repeating: "|", count: min(bars, 50))
+            print("\r[\(bufferCount)] \(barString.padding(toLength: 50, withPad: " ", startingAt: 0))", terminator: "")
             fflush(stdout)
         }
 
-        try await audioCapture.startRecording()
-        try await Task.sleep(nanoseconds: UInt64(duration) * 1_000_000_000)
-        audioCapture.stopRecording()
+        engine.prepare()
+        try engine.start()
+
+        Thread.sleep(forTimeInterval: TimeInterval(duration))
+
+        inputNode.removeTap(onBus: 0)
+        engine.stop()
 
         print("")
         print("")
-        print("Test complete!")
+        print("Test complete.")
+        print("Buffers received: \(bufferCount)")
         print("Max level: \(String(format: "%.4f", maxLevel))")
 
-        if maxLevel < 0.001 {
-            print("⚠️  Very low audio level detected. Check microphone connection.")
+        if bufferCount == 0 {
+            print("No audio buffers received.")
+            print("Ensure Terminal has microphone permission: System Settings > Privacy & Security > Microphone")
+        } else if maxLevel < 0.001 {
+            print("Very low audio level. Check microphone connection.")
         } else if maxLevel < 0.01 {
             print("Audio level is low but detectable.")
         } else {
-            print("✓ Audio level looks good!")
+            print("Audio level looks good.")
         }
     }
 }
@@ -127,7 +142,7 @@ struct Run: AsyncParsableCommand {
         controller.onStateChange = { state in
             switch state {
             case .idle:
-                print("\r[Idle] Double-tap Right ⌘ to start dictating", terminator: "")
+                print("\r[Idle] Double-tap Right Cmd to start dictating", terminator: "")
             case .listening:
                 print("\r[Listening] Speak now...                     ", terminator: "")
             case .processing:
@@ -142,8 +157,8 @@ struct Run: AsyncParsableCommand {
 
         try await controller.start()
 
-        print("Model loaded!")
-        print("Double-tap Right ⌘ to start/stop dictation.")
+        print("Model loaded.")
+        print("Double-tap Right Cmd to start/stop dictation.")
         print("Press Ctrl+C to quit.")
         print("")
 
@@ -157,7 +172,6 @@ struct Run: AsyncParsableCommand {
         signal(SIGINT, SIG_IGN)
 
         await withCheckedContinuation { (_: CheckedContinuation<Void, Never>) in
-            // Keep running until signal
         }
     }
 }
