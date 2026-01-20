@@ -172,6 +172,7 @@ struct Run: AsyncParsableCommand {
             Darwin.exit(0)
         }
 
-        dispatchMain()
+        // Keep the run loop running
+        CFRunLoopRun()
     }
 }
