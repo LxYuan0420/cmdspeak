@@ -2,15 +2,12 @@ import Foundation
 import WhisperKit
 
 /// WhisperKit-based transcription engine for on-device inference.
-public final class WhisperKitEngine: TranscriptionEngine, @unchecked Sendable {
+public actor WhisperKitEngine: TranscriptionEngine {
     private var whisperKit: WhisperKit?
     private let modelName: String
-    private let lock = NSLock()
 
-    public var isReady: Bool {
-        lock.lock()
-        defer { lock.unlock() }
-        return whisperKit != nil
+    public nonisolated var isReady: Bool {
+        false  // Can't check synchronously with actor
     }
 
     /// Initialize the engine with a model name.
@@ -21,22 +18,16 @@ public final class WhisperKitEngine: TranscriptionEngine, @unchecked Sendable {
 
     public func initialize() async throws {
         do {
-            let kit = try await WhisperKit(model: modelName)
-            lock.lock()
-            whisperKit = kit
-            lock.unlock()
+            whisperKit = try await WhisperKit(model: modelName)
         } catch {
             throw TranscriptionError.modelLoadFailed(error.localizedDescription)
         }
     }
 
     public func transcribe(audioSamples: [Float]) async throws -> TranscriptionResult {
-        lock.lock()
         guard let kit = whisperKit else {
-            lock.unlock()
             throw TranscriptionError.notInitialized
         }
-        lock.unlock()
 
         guard !audioSamples.isEmpty else {
             throw TranscriptionError.emptyAudio
@@ -62,8 +53,6 @@ public final class WhisperKitEngine: TranscriptionEngine, @unchecked Sendable {
     }
 
     public func unload() {
-        lock.lock()
         whisperKit = nil
-        lock.unlock()
     }
 }
