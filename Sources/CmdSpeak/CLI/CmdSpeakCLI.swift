@@ -155,11 +155,15 @@ struct Run: AsyncParsableCommand {
             fflush(stdout)
         }
 
-        try await controller.start()
+        do {
+            try await controller.start()
+        } catch {
+            print("Error: \(error.localizedDescription)")
+            return
+        }
 
-        print("Model loaded.")
-        print("Double-tap Right Cmd to start/stop dictation.")
-        print("Press Ctrl+C to quit.")
+        print("Ready.")
+        print("Double-tap Right Cmd to dictate. Ctrl+C to quit.")
         print("")
 
         let signalSource = DispatchSource.makeSignalSource(signal: SIGINT, queue: .main)

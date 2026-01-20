@@ -61,8 +61,21 @@ public final class CmdSpeakController: @unchecked Sendable {
 
     public func start() async throws {
         try await engine.initialize()
-        try hotkeyManager.start()
-        setState(.idle)
+
+        // Wait for accessibility permission with retries
+        var attempts = 0
+        while attempts < 60 {
+            do {
+                try hotkeyManager.start()
+                setState(.idle)
+                return
+            } catch HotkeyError.accessibilityNotGranted {
+                attempts += 1
+                try await Task.sleep(nanoseconds: 1_000_000_000)
+            }
+        }
+
+        throw HotkeyError.accessibilityNotGranted
     }
 
     public func stop() {

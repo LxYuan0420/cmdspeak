@@ -26,6 +26,11 @@ public final class HotkeyManager: HotkeyManaging {
     }
 
     public func start() throws {
+        if !checkAccessibilityPermission() {
+            requestAccessibilityPermission()
+            throw HotkeyError.accessibilityNotGranted
+        }
+
         let eventMask: CGEventMask = (1 << CGEventType.flagsChanged.rawValue)
 
         guard let tap = CGEvent.tapCreate(
@@ -48,6 +53,15 @@ public final class HotkeyManager: HotkeyManaging {
         runLoopSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
         CFRunLoopAddSource(CFRunLoopGetCurrent(), runLoopSource, .commonModes)
         CGEvent.tapEnable(tap: tap, enable: true)
+    }
+
+    public func checkAccessibilityPermission() -> Bool {
+        AXIsProcessTrusted()
+    }
+
+    public func requestAccessibilityPermission() {
+        let options = [kAXTrustedCheckOptionPrompt.takeRetainedValue() as String: true]
+        AXIsProcessTrustedWithOptions(options as CFDictionary)
     }
 
     public func stop() {
@@ -96,11 +110,14 @@ public final class HotkeyManager: HotkeyManaging {
 
 public enum HotkeyError: Error, LocalizedError {
     case tapCreationFailed
+    case accessibilityNotGranted
 
     public var errorDescription: String? {
         switch self {
         case .tapCreationFailed:
-            return "Failed to create event tap. Ensure Accessibility permissions are granted."
+            return "Failed to create event tap"
+        case .accessibilityNotGranted:
+            return "Accessibility permission required. Grant permission in System Settings, then restart the app."
         }
     }
 }
