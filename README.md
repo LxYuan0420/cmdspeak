@@ -63,7 +63,7 @@ Configuration file: `~/.config/cmdspeak/config.toml`
 ```toml
 [model]
 type = "local"
-name = "large-v3-turbo"
+name = "openai_whisper-base"
 
 [hotkey]
 trigger = "double-tap-right-cmd"
@@ -80,9 +80,11 @@ menu_bar_icon = true
 
 ### Available Models
 
-- `large-v3-turbo` (default) - Best quality, ~1.5GB
-- `base` - Smaller, faster, lower quality
-- `small` - Balance of speed and quality
+- `openai_whisper-base` (default) - Small and fast, ~150MB
+- `openai_whisper-small` - Better quality, ~500MB
+- `openai_whisper-large-v3_turbo` - Best quality, ~1.5GB
+
+See all models: https://huggingface.co/argmaxinc/whisperkit-coreml
 
 ## How It Works
 

@@ -31,7 +31,7 @@ public struct ModelConfig: Codable, Sendable {
 
     public init(
         type: String = "local",
-        name: String = "large-v3-turbo",
+        name: String = "openai_whisper-base",
         provider: String? = nil,
         apiKey: String? = nil
     ) {
