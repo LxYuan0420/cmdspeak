@@ -8,6 +8,7 @@ let package = Package(
     ],
     products: [
         .executable(name: "cmdspeak", targets: ["CmdSpeakCLI"]),
+        .executable(name: "CmdSpeakApp", targets: ["CmdSpeakApp"]),
         .library(name: "CmdSpeakCore", targets: ["CmdSpeakCore"])
     ],
     dependencies: [
@@ -16,6 +17,11 @@ let package = Package(
         .package(url: "https://github.com/apple/swift-argument-parser.git", from: "1.3.0")
     ],
     targets: [
+        .executableTarget(
+            name: "CmdSpeakApp",
+            dependencies: ["CmdSpeakCore"],
+            path: "Sources/CmdSpeak/App"
+        ),
         .executableTarget(
             name: "CmdSpeakCLI",
             dependencies: [
