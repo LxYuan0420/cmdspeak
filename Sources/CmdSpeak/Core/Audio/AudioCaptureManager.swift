@@ -1,16 +1,8 @@
 import AVFoundation
 import Foundation
 
-public protocol AudioCapturing: AnyObject {
-    var isRecording: Bool { get }
-    var onAudioBuffer: ((_ buffer: AVAudioPCMBuffer) -> Void)? { get set }
-
-    func startRecording() async throws
-    func stopRecording()
-    func requestPermission() async -> Bool
-}
-
-public final class AudioCaptureManager: AudioCapturing, @unchecked Sendable {
+@MainActor
+public final class AudioCaptureManager {
     private var audioEngine: AVAudioEngine?
 
     public private(set) var isRecording = false
@@ -38,16 +30,23 @@ public final class AudioCaptureManager: AudioCapturing, @unchecked Sendable {
         let inputNode = engine.inputNode
         let format = inputNode.outputFormat(forBus: 0)
 
-        guard format.sampleRate > 0 else {
+        guard format.sampleRate > 0, format.channelCount > 0 else {
             throw AudioCaptureError.noInputDevice
         }
 
-        inputNode.installTap(onBus: 0, bufferSize: 4096, format: format) { [weak self] buffer, _ in
-            self?.onAudioBuffer?(buffer)
+        let callback = onAudioBuffer
+        inputNode.installTap(onBus: 0, bufferSize: 4096, format: format) { buffer, _ in
+            callback?(buffer)
         }
 
         engine.prepare()
-        try engine.start()
+
+        do {
+            try engine.start()
+        } catch {
+            inputNode.removeTap(onBus: 0)
+            throw AudioCaptureError.engineStartFailed(error)
+        }
 
         audioEngine = engine
         isRecording = true

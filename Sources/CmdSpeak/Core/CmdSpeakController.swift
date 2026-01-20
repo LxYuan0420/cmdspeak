@@ -4,7 +4,8 @@ import Foundation
 
 /// Main controller orchestrating all CmdSpeak components.
 /// Handles the flow: hotkey → audio → VAD → transcription → injection
-public final class CmdSpeakController: @unchecked Sendable {
+@MainActor
+public final class CmdSpeakController {
     public enum State: Sendable {
         case idle
         case listening
@@ -49,7 +50,7 @@ public final class CmdSpeakController: @unchecked Sendable {
         }
 
         vad.onSpeechEnd = { [weak self] in
-            Task {
+            Task { @MainActor in
                 await self?.handleSpeechEnd()
             }
         }
