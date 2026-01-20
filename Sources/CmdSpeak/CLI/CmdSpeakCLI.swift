@@ -166,7 +166,8 @@ struct Run: AsyncParsableCommand {
         print("Ready.")
         print("Double-tap Right Cmd to dictate. Ctrl+C to quit.")
         print("")
-        print("Note: Disable macOS Dictation shortcut in System Settings > Keyboard > Dictation")
+        print("Important: Set macOS Dictation Shortcut to 'Off':")
+        print("  System Settings > Keyboard > Dictation > Shortcut > Off")
 
         signal(SIGINT) { _ in
             Darwin.exit(0)

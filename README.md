@@ -39,6 +39,9 @@ The app runs in the menu bar. On first launch:
 2. Grant **Accessibility** permission (System Settings > Privacy & Security > Accessibility)
 3. The Whisper model will download (~1.5GB for large-v3-turbo)
 
+**Before using, disable macOS Dictation shortcut:**
+- System Settings > Keyboard > Dictation > Shortcut > **Off**
+
 Once running:
 - Double-tap Right Command key to start dictating
 - Speak naturally
