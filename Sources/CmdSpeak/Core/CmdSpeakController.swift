@@ -26,6 +26,8 @@ public final class CmdSpeakController {
 
     private var audioBuffer: [Float] = []
     private let bufferQueue = DispatchQueue(label: "com.cmdspeak.buffer", qos: .userInteractive)
+    private var listeningStartTime: Date?
+    private let minListeningDuration: TimeInterval = 0.5
 
     public init(config: Config = Config.default) {
         self.config = config
@@ -43,11 +45,26 @@ public final class CmdSpeakController {
     }
 
     private func setupCallbacks() {
+        print("[Controller] Setting up callbacks...")
         hotkeyManager.onHotkeyTriggered = { [weak self] in
-            Task { @MainActor in
-                await self?.handleHotkeyTriggered()
+            print("[Controller] onHotkeyTriggered closure entered")
+            guard let self = self else {
+                print("[Controller] self is nil!")
+                return
             }
+            print("[Controller] Scheduling on main run loop...")
+            CFRunLoopPerformBlock(CFRunLoopGetMain(), CFRunLoopMode.commonModes.rawValue) {
+                print("[Controller] Run loop block executing")
+                Task { @MainActor in
+                    print("[Controller] Task starting handleHotkeyTriggered")
+                    await self.handleHotkeyTriggered()
+                    print("[Controller] handleHotkeyTriggered completed")
+                }
+            }
+            CFRunLoopWakeUp(CFRunLoopGetMain())
+            print("[Controller] Run loop woken")
         }
+        print("[Controller] Callbacks setup complete")
 
         vad.onSpeechEnd = { [weak self] in
             Task { @MainActor in
@@ -61,14 +78,17 @@ public final class CmdSpeakController {
     }
 
     public func start() async throws {
+        print("[Controller] start() called, initializing engine...")
         try await engine.initialize()
+        print("[Controller] Engine initialized")
 
-        // Wait for accessibility permission with retries
         var attempts = 0
         while attempts < 60 {
             do {
                 try hotkeyManager.start()
+                print("[Controller] Hotkey manager started, setting state to idle")
                 setState(.idle)
+                print("[Controller] start() completing successfully")
                 return
             } catch HotkeyError.accessibilityNotGranted {
                 attempts += 1
@@ -89,42 +109,90 @@ public final class CmdSpeakController {
     }
 
     private func handleHotkeyTriggered() async {
+        print("[Controller] handleHotkeyTriggered called, state: \(state)")
         switch state {
         case .idle:
+            print("[Controller] Starting listening...")
             await startListening()
         case .listening:
+            if let startTime = listeningStartTime {
+                let elapsed = Date().timeIntervalSince(startTime)
+                if elapsed < minListeningDuration {
+                    print("[Controller] Ignoring stop - only \(String(format: "%.2f", elapsed))s elapsed (min: \(minListeningDuration)s)")
+                    return
+                }
+            }
+            print("[Controller] Stopping listening...")
             await stopListening()
         default:
+            print("[Controller] Ignoring hotkey in state: \(state)")
             break
         }
     }
 
     private func startListening() async {
+        print("[Controller] startListening() called")
         setState(.listening)
+        listeningStartTime = Date()
         clearBuffer()
         vad.reset()
 
         do {
+            print("[Controller] Starting audio capture...")
             try await audioCapture.startRecording()
+            print("[Controller] Audio capture started successfully")
             playFeedbackSound(start: true)
         } catch {
+            print("[Controller] Audio capture error: \(error)")
+            listeningStartTime = nil
             setState(.error(error.localizedDescription))
         }
     }
 
     private func stopListening() async {
+        listeningStartTime = nil
         audioCapture.stopRecording()
         await processAndInject()
     }
 
+    private var lastBufferLogTime: Date?
+    
     private func handleAudioBuffer(_ buffer: AVAudioPCMBuffer) {
         guard let channelData = buffer.floatChannelData?[0] else { return }
         let frameLength = Int(buffer.frameLength)
+        let inputSampleRate = buffer.format.sampleRate
+        let targetSampleRate = 16000.0
 
-        bufferQueue.sync {
-            for i in 0..<frameLength {
-                audioBuffer.append(channelData[i])
+        var samplesAdded = 0
+        if inputSampleRate != targetSampleRate && inputSampleRate > 0 {
+            let ratio = inputSampleRate / targetSampleRate
+            let outputLength = Int(Double(frameLength) / ratio)
+            guard outputLength > 0 else { return }
+
+            bufferQueue.sync {
+                for i in 0..<outputLength {
+                    let srcIndex = Int(Double(i) * ratio)
+                    if srcIndex < frameLength {
+                        audioBuffer.append(channelData[srcIndex])
+                        samplesAdded += 1
+                    }
+                }
             }
+        } else {
+            bufferQueue.sync {
+                for i in 0..<frameLength {
+                    audioBuffer.append(channelData[i])
+                    samplesAdded += 1
+                }
+            }
+        }
+
+        let now = Date()
+        if lastBufferLogTime == nil || now.timeIntervalSince(lastBufferLogTime!) >= 0.5 {
+            var totalSamples = 0
+            bufferQueue.sync { totalSamples = audioBuffer.count }
+            print("[Audio] Receiving... \(totalSamples) samples (\(String(format: "%.1f", Double(totalSamples) / 16000.0))s)")
+            lastBufferLogTime = now
         }
 
         vad.process(buffer: buffer)
@@ -144,24 +212,38 @@ public final class CmdSpeakController {
             samples = audioBuffer
         }
 
+        let durationSec = Double(samples.count) / 16000.0
+        print("\n[Audio] Captured \(samples.count) samples (\(String(format: "%.1f", durationSec))s)")
+
         guard !samples.isEmpty else {
+            print("[Audio] No audio captured")
+            setState(.idle)
+            return
+        }
+
+        guard samples.count > 1600 else {
+            print("[Audio] Too short, skipping")
             setState(.idle)
             return
         }
 
         do {
+            print("[Transcribing...]")
             let result = try await engine.transcribe(audioSamples: samples)
 
             guard !result.text.isEmpty else {
+                print("[Result] Empty transcription")
                 setState(.idle)
                 return
             }
 
+            print("[Result] \"\(result.text)\"")
             setState(.injecting)
             try injector.inject(text: result.text)
             playFeedbackSound(start: false)
             setState(.idle)
         } catch {
+            print("[Error] \(error.localizedDescription)")
             setState(.error(error.localizedDescription))
             DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
                 self?.setState(.idle)

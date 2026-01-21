@@ -1,14 +1,16 @@
 # CmdSpeak
 
-A drop-in replacement for macOS Dictation using modern open-source speech models. Same gesture (double-tap Cmd), same universality, much better transcription.
+A drop-in replacement for macOS Dictation using modern open-source speech models. Same gesture (double-tap Option), same universality, much better transcription.
 
 ## Features
 
 - **System-wide** - Works in any text field: browsers, terminals, IDEs, Slack, etc.
 - **No UI** - Voice in, text out. No popups, no editors, no AI chat.
 - **Local-first** - Uses WhisperKit for on-device inference on Apple Silicon
+- **Multi-language** - Auto-detects language or set a specific source language
+- **Translation** - Speak any language, get English output
 - **Fast** - Target < 500ms from speech end to text injection
-- **Private** - Audio never leaves your device unless you configure an API model
+- **Private** - Audio never leaves your device
 
 ## Requirements
 
@@ -43,7 +45,7 @@ The app runs in the menu bar. On first launch:
 - System Settings > Keyboard > Dictation > Shortcut > **Off**
 
 Once running:
-- Double-tap Right Command key to start dictating
+- Double-tap Right Option key to start dictating
 - Speak naturally
 - Double-tap again or pause to stop
 - Text appears at your cursor
@@ -67,36 +69,59 @@ Configuration file: `~/.config/cmdspeak/config.toml`
 [model]
 type = "local"
 name = "openai_whisper-base"
+# language = "zh"           # Optional: source language (auto-detect if not set)
+# translate_to_english = true  # Optional: translate to English
 
 [hotkey]
-trigger = "double-tap-right-cmd"
+trigger = "double-tap-right-option"
 interval_ms = 300
-
-[audio]
-sample_rate = 16000
-silence_threshold_ms = 500
 
 [feedback]
 sound_enabled = true
-menu_bar_icon = true
 ```
+
+### Language Options
+
+```toml
+# Auto-detect language (default)
+[model]
+name = "openai_whisper-base"
+
+# Transcribe Chinese to Chinese
+[model]
+name = "openai_whisper-base"
+language = "zh"
+
+# Translate Chinese to English
+[model]
+name = "openai_whisper-base"
+language = "zh"
+translate_to_english = true
+
+# Auto-detect any language and translate to English
+[model]
+name = "openai_whisper-base"
+translate_to_english = true
+```
+
+Supported languages: en, zh, ja, ko, es, fr, de, it, pt, ru, ar, hi, and 90+ more.
 
 ### Available Models
 
 - `openai_whisper-base` (default) - Small and fast, ~150MB
 - `openai_whisper-small` - Better quality, ~500MB
-- `openai_whisper-large-v3_turbo` - Best quality, ~1.5GB
+- `openai_whisper-large-v3-turbo` - Best quality, ~1.5GB
 
 See all models: https://huggingface.co/argmaxinc/whisperkit-coreml
 
 ## How It Works
 
 ```
-Double-tap Cmd -> AudioCapture -> VAD -> WhisperKit -> TextInjection -> Cursor
+Double-tap Option -> AudioCapture -> VAD -> WhisperKit -> TextInjection -> Cursor
 ```
 
-1. **Hotkey Detection** - Detects double-tap of Right Command key via CGEventTap
-2. **Audio Capture** - Records audio from microphone via AVAudioEngine
+1. **Hotkey Detection** - Detects double-tap of Right Option key via CGEventTap
+2. **Audio Capture** - Records audio from microphone via AVCaptureSession
 3. **VAD** - Voice Activity Detection determines when you stop speaking
 4. **Transcription** - WhisperKit transcribes audio locally using CoreML/ANE
 5. **Text Injection** - Injects text at cursor via macOS Accessibility APIs

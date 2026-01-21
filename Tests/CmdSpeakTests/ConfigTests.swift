@@ -6,8 +6,8 @@ final class ConfigTests: XCTestCase {
         let config = Config.default
 
         XCTAssertEqual(config.model.type, "local")
-        XCTAssertEqual(config.model.name, "large-v3-turbo")
-        XCTAssertEqual(config.hotkey.trigger, "double-tap-right-cmd")
+        XCTAssertEqual(config.model.name, "openai_whisper-base")
+        XCTAssertEqual(config.hotkey.trigger, "double-tap-right-option")
         XCTAssertEqual(config.hotkey.intervalMs, 300)
         XCTAssertEqual(config.audio.sampleRate, 16000)
         XCTAssertEqual(config.audio.silenceThresholdMs, 500)

@@ -28,17 +28,30 @@ public struct ModelConfig: Codable, Sendable {
     public var name: String
     public var provider: String?
     public var apiKey: String?
+    public var language: String?
+    public var translateToEnglish: Bool
 
     public init(
         type: String = "local",
         name: String = "openai_whisper-base",
         provider: String? = nil,
-        apiKey: String? = nil
+        apiKey: String? = nil,
+        language: String? = nil,
+        translateToEnglish: Bool = false
     ) {
         self.type = type
         self.name = name
         self.provider = provider
         self.apiKey = apiKey
+        self.language = language
+        self.translateToEnglish = translateToEnglish
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case type, name, provider
+        case apiKey = "api_key"
+        case language
+        case translateToEnglish = "translate_to_english"
     }
 }
 
@@ -46,7 +59,7 @@ public struct HotkeyConfig: Codable, Sendable {
     public var trigger: String
     public var intervalMs: Int
 
-    public init(trigger: String = "double-tap-right-cmd", intervalMs: Int = 300) {
+    public init(trigger: String = "double-tap-right-option", intervalMs: Int = 300) {
         self.trigger = trigger
         self.intervalMs = intervalMs
     }
@@ -106,9 +119,14 @@ public final class ConfigManager {
         }
 
         let content = try String(contentsOf: configPath, encoding: .utf8)
-        let table = try TOMLTable(string: content)
 
-        return try parseConfig(from: table)
+        let decoder = TOMLDecoder()
+        do {
+            return try decoder.decode(Config.self, from: content)
+        } catch {
+            let table = try TOMLTable(string: content)
+            return try parseConfig(from: table)
+        }
     }
 
     public func save(_ config: Config) throws {
@@ -127,41 +145,56 @@ public final class ConfigManager {
     private func parseConfig(from table: TOMLTable) throws -> Config {
         var config = Config.default
 
-        if let model = table["model"] as? TOMLTable {
-            if let type = model["type"] as? String { config.model.type = type }
-            if let name = model["name"] as? String { config.model.name = name }
-            if let provider = model["provider"] as? String { config.model.provider = provider }
-            if let apiKey = model["api_key"] as? String {
+        if let modelValue = table["model"], let model = modelValue.table {
+            if let type = model["type"]?.string { config.model.type = type }
+            if let name = model["name"]?.string { config.model.name = name }
+            if let provider = model["provider"]?.string { config.model.provider = provider }
+            if let apiKey = model["api_key"]?.string {
                 config.model.apiKey = resolveEnvValue(apiKey)
             }
-        }
-
-        if let hotkey = table["hotkey"] as? TOMLTable {
-            if let trigger = hotkey["trigger"] as? String { config.hotkey.trigger = trigger }
-            if let interval = hotkey["interval_ms"] as? Int { config.hotkey.intervalMs = interval }
-        }
-
-        if let audio = table["audio"] as? TOMLTable {
-            if let rate = audio["sample_rate"] as? Int { config.audio.sampleRate = rate }
-            if let silence = audio["silence_threshold_ms"] as? Int {
-                config.audio.silenceThresholdMs = silence
+            if let language = model["language"]?.string { config.model.language = language }
+            if let translate = model["translate_to_english"]?.bool {
+                config.model.translateToEnglish = translate
             }
         }
 
-        if let feedback = table["feedback"] as? TOMLTable {
-            if let sound = feedback["sound_enabled"] as? Bool { config.feedback.soundEnabled = sound }
-            if let icon = feedback["menu_bar_icon"] as? Bool { config.feedback.menuBarIcon = icon }
+        if let hotkeyValue = table["hotkey"], let hotkey = hotkeyValue.table {
+            if let trigger = hotkey["trigger"]?.string { config.hotkey.trigger = trigger }
+            if let interval = hotkey["interval_ms"]?.int { config.hotkey.intervalMs = Int(interval) }
+        }
+
+        if let audioValue = table["audio"], let audio = audioValue.table {
+            if let rate = audio["sample_rate"]?.int { config.audio.sampleRate = Int(rate) }
+            if let silence = audio["silence_threshold_ms"]?.int {
+                config.audio.silenceThresholdMs = Int(silence)
+            }
+        }
+
+        if let feedbackValue = table["feedback"], let feedback = feedbackValue.table {
+            if let sound = feedback["sound_enabled"]?.bool { config.feedback.soundEnabled = sound }
+            if let icon = feedback["menu_bar_icon"]?.bool { config.feedback.menuBarIcon = icon }
         }
 
         return config
     }
 
     private func generateTOML(from config: Config) -> String {
-        """
+        var toml = """
         [model]
         type = "\(config.model.type)"
         name = "\(config.model.name)"
+        """
 
+        if let language = config.model.language {
+            toml += "\nlanguage = \"\(language)\""
+        }
+        if config.model.translateToEnglish {
+            toml += "\ntranslate_to_english = true"
+        }
+
+        toml += """
+
+        
         [hotkey]
         trigger = "\(config.hotkey.trigger)"
         interval_ms = \(config.hotkey.intervalMs)
@@ -174,6 +207,8 @@ public final class ConfigManager {
         sound_enabled = \(config.feedback.soundEnabled)
         menu_bar_icon = \(config.feedback.menuBarIcon)
         """
+
+        return toml
     }
 
     private func resolveEnvValue(_ value: String) -> String {

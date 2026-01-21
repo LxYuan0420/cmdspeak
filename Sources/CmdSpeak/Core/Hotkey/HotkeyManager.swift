@@ -16,7 +16,7 @@ public final class HotkeyManager: HotkeyManaging {
     private var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
 
-    private var lastRightCmdTime: Date?
+    private var lastRightOptionTime: Date?
     private let doubleTapInterval: TimeInterval
 
     /// Initialize the hotkey manager.
@@ -51,7 +51,7 @@ public final class HotkeyManager: HotkeyManaging {
         eventTap = tap
 
         runLoopSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
-        CFRunLoopAddSource(CFRunLoopGetCurrent(), runLoopSource, .commonModes)
+        CFRunLoopAddSource(CFRunLoopGetMain(), runLoopSource, .commonModes)
         CGEvent.tapEnable(tap: tap, enable: true)
     }
 
@@ -69,7 +69,7 @@ public final class HotkeyManager: HotkeyManaging {
             CGEvent.tapEnable(tap: tap, enable: false)
         }
         if let source = runLoopSource {
-            CFRunLoopRemoveSource(CFRunLoopGetCurrent(), source, .commonModes)
+            CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .commonModes)
         }
         eventTap = nil
         runLoopSource = nil
@@ -83,20 +83,22 @@ public final class HotkeyManager: HotkeyManaging {
         let flags = event.flags
         let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
 
-        let isRightCmd = keyCode == 54
-        let cmdPressed = flags.contains(.maskCommand)
+        let isRightOption = keyCode == 61
+        let optionPressed = flags.contains(.maskAlternate)
 
-        if isRightCmd && !cmdPressed {
+        if isRightOption && !optionPressed {
             let now = Date()
 
-            if let lastTime = lastRightCmdTime,
-               now.timeIntervalSince(lastTime) <= doubleTapInterval {
-                lastRightCmdTime = nil
-                DispatchQueue.main.async { [weak self] in
-                    self?.onHotkeyTriggered?()
+            if let lastTime = lastRightOptionTime {
+                let elapsed = now.timeIntervalSince(lastTime)
+                if elapsed <= doubleTapInterval {
+                    lastRightOptionTime = nil
+                    onHotkeyTriggered?()
+                } else {
+                    lastRightOptionTime = now
                 }
             } else {
-                lastRightCmdTime = now
+                lastRightOptionTime = now
             }
         }
 

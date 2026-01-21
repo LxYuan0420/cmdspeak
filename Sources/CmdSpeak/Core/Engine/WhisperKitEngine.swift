@@ -5,15 +5,26 @@ import WhisperKit
 public actor WhisperKitEngine: TranscriptionEngine {
     private var whisperKit: WhisperKit?
     private let modelName: String
+    private let language: String?
+    private let translateToEnglish: Bool
 
     public nonisolated var isReady: Bool {
-        false  // Can't check synchronously with actor
+        false
     }
 
     /// Initialize the engine with a model name.
-    /// - Parameter modelName: Model to use (e.g., "large-v3-turbo", "base", "small")
-    public init(modelName: String = "large-v3-turbo") {
+    /// - Parameters:
+    ///   - modelName: Model to use (e.g., "large-v3-turbo", "base", "small")
+    ///   - language: Source language (nil for auto-detect)
+    ///   - translateToEnglish: If true, translate non-English speech to English
+    public init(
+        modelName: String = "large-v3-turbo",
+        language: String? = nil,
+        translateToEnglish: Bool = false
+    ) {
         self.modelName = modelName
+        self.language = language
+        self.translateToEnglish = translateToEnglish
     }
 
     public func initialize() async throws {
@@ -35,16 +46,23 @@ public actor WhisperKitEngine: TranscriptionEngine {
 
         let startTime = Date()
 
+        let options = DecodingOptions(
+            task: translateToEnglish ? .translate : .transcribe,
+            language: language,
+            usePrefillPrompt: true,
+            detectLanguage: language == nil
+        )
+
         do {
-            let results = try await kit.transcribe(audioArray: audioSamples)
+            let results = try await kit.transcribe(audioArray: audioSamples, decodeOptions: options)
             let duration = Date().timeIntervalSince(startTime)
 
             let text = results.map { $0.text }.joined(separator: " ").trimmingCharacters(in: .whitespaces)
-            let language = results.first?.language
+            let detectedLanguage = results.first?.language
 
             return TranscriptionResult(
                 text: text,
-                language: language,
+                language: detectedLanguage,
                 duration: duration
             )
         } catch {

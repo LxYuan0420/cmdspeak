@@ -119,7 +119,7 @@ struct MenuBarView: View {
 
             Divider()
 
-            Text("Double-tap Right ⌘ to dictate")
+            Text("Double-tap Right Option to dictate")
                 .font(.caption)
                 .foregroundColor(.secondary)
 
