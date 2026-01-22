@@ -21,6 +21,9 @@ public actor OpenAIRealtimeEngine: TranscriptionEngine {
     private var sessionCreated: Bool = false
 
     private var partialTranscriptionHandler: (@Sendable (String) -> Void)?
+    private var onDisconnect: (@Sendable () -> Void)?
+    private var onError: (@Sendable (String) -> Void)?
+    private var pingTask: Task<Void, Never>?
 
     public init(apiKey: String, model: String = "gpt-4o-transcribe", language: String? = nil) {
         self.apiKey = apiKey
@@ -67,15 +70,46 @@ public actor OpenAIRealtimeEngine: TranscriptionEngine {
 
         try await configureSession()
         startReceiving()
+        startPingTimer()
 
         Self.logger.info("WebSocket connected")
     }
 
     public func disconnect() {
+        pingTask?.cancel()
+        pingTask = nil
         webSocket?.cancel(with: .normalClosure, reason: nil)
         webSocket = nil
         urlSession = nil
         sessionCreated = false
+    }
+
+    public func setOnDisconnect(_ handler: (@Sendable () -> Void)?) {
+        onDisconnect = handler
+    }
+
+    public func setOnError(_ handler: (@Sendable (String) -> Void)?) {
+        onError = handler
+    }
+
+    private func startPingTimer() {
+        pingTask?.cancel()
+        pingTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 30_000_000_000)
+                guard !Task.isCancelled else { break }
+                await self?.sendPing()
+            }
+        }
+    }
+
+    private func sendPing() async {
+        guard let ws = webSocket else { return }
+        ws.sendPing { error in
+            if let error = error {
+                Self.logger.warning("Ping failed: \(error.localizedDescription)")
+            }
+        }
     }
 
     public func sendAudio(samples: [Float]) async throws {
@@ -128,29 +162,28 @@ public actor OpenAIRealtimeEngine: TranscriptionEngine {
     private func configureSession() async throws {
         guard let ws = webSocket else { return }
 
-        var sessionConfig: [String: Any] = [
+        var transcriptionConfig: [String: Any] = [
+            "model": model,
+            "prompt": "Transcribe in any language including mixed language content"
+        ]
+
+        if let lang = language {
+            transcriptionConfig["language"] = lang
+        }
+
+        let sessionConfig: [String: Any] = [
             "type": "transcription_session.update",
             "session": [
                 "input_audio_format": "pcm16",
-                "input_audio_transcription": [
-                    "model": model
-                ] as [String: Any],
+                "input_audio_transcription": transcriptionConfig,
                 "turn_detection": [
-                    "type": "server_vad",
-                    "threshold": 0.5,
-                    "prefix_padding_ms": 300,
+                    "type": "semantic_vad",
+                    "eagerness": "high",
+                    "prefix_padding_ms": 100,
                     "silence_duration_ms": 500
                 ] as [String: Any]
             ] as [String: Any]
         ]
-
-        if let lang = language {
-            var session = sessionConfig["session"] as! [String: Any]
-            var transcription = session["input_audio_transcription"] as! [String: Any]
-            transcription["language"] = lang
-            session["input_audio_transcription"] = transcription
-            sessionConfig["session"] = session
-        }
 
         let jsonData = try JSONSerialization.data(withJSONObject: sessionConfig)
         let jsonString = String(data: jsonData, encoding: .utf8)!
@@ -187,6 +220,7 @@ public actor OpenAIRealtimeEngine: TranscriptionEngine {
             if (error as NSError).code != 57 {
                 Self.logger.error("WebSocket receive error: \(error.localizedDescription)")
             }
+            onDisconnect?()
         }
     }
 
@@ -233,6 +267,7 @@ public actor OpenAIRealtimeEngine: TranscriptionEngine {
             if let error = json["error"] as? [String: Any],
                let message = error["message"] as? String {
                 Self.logger.error("API error: \(message)")
+                onError?(message)
             }
 
         default:

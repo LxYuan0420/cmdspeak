@@ -29,13 +29,14 @@ public final class OpenAIRealtimeController {
 
     private var isConnected: Bool = false
     private var silenceTimer: Timer?
-    private let silenceTimeout: TimeInterval = 5.0
+    private let silenceTimeout: TimeInterval
     private var pendingText: String = ""
 
     private let inputSampleRate: Double = 24000
 
     public init(config: Config) {
         self.config = config
+        self.silenceTimeout = TimeInterval(config.audio.silenceThresholdMs) / 1000.0
 
         let apiKey = Self.resolveEnvValue(config.model.apiKey ?? "env:OPENAI_API_KEY")
         self.engine = OpenAIRealtimeEngine(
