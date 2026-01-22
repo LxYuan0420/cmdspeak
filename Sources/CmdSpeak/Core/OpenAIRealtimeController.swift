@@ -13,7 +13,6 @@ public final class OpenAIRealtimeController {
         case idle
         case connecting
         case listening
-        case processing
         case error(String)
     }
 
@@ -29,11 +28,9 @@ public final class OpenAIRealtimeController {
     private let hotkeyManager: HotkeyManager
 
     private var isConnected: Bool = false
-    private let maxListeningDuration: TimeInterval = 60.0
-    private var maxDurationTimer: Timer?
     private var silenceTimer: Timer?
     private let silenceTimeout: TimeInterval = 5.0
-    private var lastTranscriptionTime: Date?
+    private var pendingText: String = ""
 
     private let inputSampleRate: Double = 24000
 
@@ -86,8 +83,8 @@ public final class OpenAIRealtimeController {
     }
 
     private func handlePartialTranscription(_ delta: String) {
+        pendingText += delta
         onPartialTranscription?(delta)
-        lastTranscriptionTime = Date()
         resetSilenceTimer()
     }
 
@@ -99,9 +96,32 @@ public final class OpenAIRealtimeController {
         ) { [weak self] _ in
             Task { @MainActor [weak self] in
                 guard let self = self, case .listening = self.state else { return }
-                await self.finishListening()
+                await self.finishAndInject()
             }
         }
+    }
+
+    private func finishAndInject() async {
+        silenceTimer?.invalidate()
+        silenceTimer = nil
+        audioCapture.stopRecording()
+        await engine.disconnect()
+        isConnected = false
+
+        let text = pendingText.trimmingCharacters(in: .whitespacesAndNewlines)
+        pendingText = ""
+
+        if !text.isEmpty {
+            onFinalTranscription?(text)
+            do {
+                try injector.inject(text: text)
+                playFeedbackSound(start: false)
+            } catch {
+                setState(.error("Failed to inject text"))
+                return
+            }
+        }
+        setState(.idle)
     }
 
     public func start() async throws {
@@ -126,7 +146,8 @@ public final class OpenAIRealtimeController {
     }
 
     public func stop() {
-        cancelTimers()
+        silenceTimer?.invalidate()
+        silenceTimer = nil
         audioCapture.stopRecording()
         hotkeyManager.stop()
         Task {
@@ -139,30 +160,26 @@ public final class OpenAIRealtimeController {
         switch state {
         case .idle:
             await startListening()
-        case .listening, .processing:
+        case .listening:
             await cancelListening()
         default:
             break
         }
     }
 
-    private func cancelTimers() {
-        maxDurationTimer?.invalidate()
-        maxDurationTimer = nil
+    private func cancelListening() async {
         silenceTimer?.invalidate()
         silenceTimer = nil
-    }
-
-    private func cancelListening() async {
-        cancelTimers()
         audioCapture.stopRecording()
         await engine.disconnect()
         isConnected = false
+        pendingText = ""
         setState(.idle)
     }
 
     private func startListening() async {
         setState(.connecting)
+        pendingText = ""
 
         do {
             try await engine.connect()
@@ -170,36 +187,12 @@ public final class OpenAIRealtimeController {
 
             try await audioCapture.startRecording()
             playFeedbackSound(start: true)
-            startMaxDurationTimer()
             setState(.listening)
-            lastTranscriptionTime = nil
 
             await engine.clearTranscription()
         } catch {
             setState(.error(error.localizedDescription))
         }
-    }
-
-    private func finishListening() async {
-        cancelTimers()
-        audioCapture.stopRecording()
-
-        let transcription = await engine.getTranscription()
-        await engine.disconnect()
-        isConnected = false
-
-        if !transcription.isEmpty {
-            onFinalTranscription?(transcription)
-            do {
-                try injector.inject(text: transcription)
-            } catch {
-                setState(.error("Failed to inject text"))
-                return
-            }
-        }
-
-        playFeedbackSound(start: false)
-        setState(.idle)
     }
 
     private func handleAudioBuffer(_ buffer: AVAudioPCMBuffer) {
@@ -224,19 +217,6 @@ public final class OpenAIRealtimeController {
 
         Task {
             try? await engine.sendAudio(samples: resampled)
-        }
-    }
-
-    private func startMaxDurationTimer() {
-        maxDurationTimer?.invalidate()
-        maxDurationTimer = Timer.scheduledTimer(
-            withTimeInterval: maxListeningDuration,
-            repeats: false
-        ) { [weak self] _ in
-            Task { @MainActor [weak self] in
-                guard let self = self, case .listening = self.state else { return }
-                await self.finishListening()
-            }
         }
     }
 

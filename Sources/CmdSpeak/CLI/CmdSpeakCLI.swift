@@ -815,10 +815,8 @@ struct RunOpenAI: ParsableCommand {
                     print("🔗 Connecting...")
                     fflush(stdout)
                 case .listening:
-                    print("🔴 ", terminator: "")
+                    print("🎙️  ", terminator: "")
                     fflush(stdout)
-                case .processing:
-                    break
                 case .error(let message):
                     print("❌ \(message)")
                     fflush(stdout)
@@ -831,7 +829,7 @@ struct RunOpenAI: ParsableCommand {
             }
 
             ctrl.onFinalTranscription = { _ in
-                print("")
+                print(" ✓")
                 fflush(stdout)
             }
 
@@ -852,8 +850,8 @@ struct RunOpenAI: ParsableCommand {
             return
         }
 
-        print("Double-tap Right Option to dictate, Ctrl+C to quit")
-        print("(Auto-stops after 5s silence)")
+        print("Double-tap Right Option to dictate (5s silence auto-injects)")
+        print("Ctrl+C to quit")
         fflush(stdout)
 
         signal(SIGINT) { _ in
