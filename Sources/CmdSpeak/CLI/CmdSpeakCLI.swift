@@ -807,16 +807,16 @@ struct RunOpenAI: ParsableCommand {
             ctrl.onStateChange = { state in
                 switch state {
                 case .idle:
-                    print("\n⌥⌥ Double-tap Right Option to dictate")
+                    print("\n[⌥⌥ to start]")
                     fflush(stdout)
                 case .connecting:
-                    print("   Connecting...", terminator: "")
+                    print("[connecting] ", terminator: "")
                     fflush(stdout)
                 case .listening:
-                    print("\r🎙️  ", terminator: "")
+                    print("\r[listening]  ", terminator: "")
                     fflush(stdout)
                 case .error(let message):
-                    print("\n❌ \(message)")
+                    print("[error] \(message)")
                     fflush(stdout)
                 }
             }
@@ -827,7 +827,7 @@ struct RunOpenAI: ParsableCommand {
             }
 
             ctrl.onFinalTranscription = { _ in
-                print("")
+                print(" [done]")
                 fflush(stdout)
             }
 
@@ -848,7 +848,7 @@ struct RunOpenAI: ParsableCommand {
             return
         }
 
-        print("CmdSpeak ready. Ctrl+C to quit.")
+        print("CmdSpeak | ⌥⌥ start → speak → ⌥⌥ stop (or 10s silence) | Ctrl+C quit")
         fflush(stdout)
 
         signal(SIGINT) { _ in
