@@ -1,0 +1,254 @@
+import Foundation
+import os
+
+/// OpenAI Realtime API transcription engine using WebSocket.
+/// Uses gpt-4o-transcribe model for real-time speech-to-text.
+public actor OpenAIRealtimeEngine: TranscriptionEngine {
+    private static let logger = Logger(subsystem: "com.cmdspeak", category: "openai-realtime")
+
+    public private(set) var isReady: Bool = false
+
+    private var webSocket: URLSessionWebSocketTask?
+    private var urlSession: URLSession?
+    private let apiKey: String
+    private let model: String
+    private let language: String?
+
+    private var accumulatedText: String = ""
+    private var transcriptionContinuation: CheckedContinuation<TranscriptionResult, Error>?
+
+    private let inputSampleRate: Double = 24000
+    private var sessionCreated: Bool = false
+
+    private var partialTranscriptionHandler: (@Sendable (String) -> Void)?
+
+    public init(apiKey: String, model: String = "gpt-4o-transcribe", language: String? = nil) {
+        self.apiKey = apiKey
+        self.model = model
+        self.language = language
+    }
+
+    public func initialize() async throws {
+        guard !apiKey.isEmpty else {
+            throw TranscriptionError.modelLoadFailed("OPENAI_API_KEY not set")
+        }
+        Self.logger.info("OpenAI Realtime Engine initialized (API mode)")
+        isReady = true
+    }
+
+    public func transcribe(audioSamples: [Float]) async throws -> TranscriptionResult {
+        throw TranscriptionError.transcriptionFailed("Use startStreaming/sendAudio/stopStreaming for realtime transcription")
+    }
+
+    public func unload() async {
+        disconnect()
+        isReady = false
+    }
+
+    public func connect() async throws {
+        guard isReady else {
+            throw TranscriptionError.notInitialized
+        }
+
+        let url = URL(string: "wss://api.openai.com/v1/realtime?intent=transcription")!
+        var request = URLRequest(url: url)
+        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        request.setValue("realtime=v1", forHTTPHeaderField: "OpenAI-Beta")
+
+        let session = URLSession(configuration: .default)
+        let ws = session.webSocketTask(with: request)
+
+        self.urlSession = session
+        self.webSocket = ws
+        self.accumulatedText = ""
+        self.sessionCreated = false
+
+        ws.resume()
+
+        try await configureSession()
+        startReceiving()
+
+        Self.logger.info("WebSocket connected")
+    }
+
+    public func disconnect() {
+        webSocket?.cancel(with: .normalClosure, reason: nil)
+        webSocket = nil
+        urlSession = nil
+        sessionCreated = false
+    }
+
+    public func sendAudio(samples: [Float]) async throws {
+        guard let ws = webSocket else {
+            throw TranscriptionError.notInitialized
+        }
+
+        let pcmData = convertToPCM16(samples: samples)
+        let base64Audio = pcmData.base64EncodedString()
+
+        let event: [String: Any] = [
+            "type": "input_audio_buffer.append",
+            "audio": base64Audio
+        ]
+
+        let jsonData = try JSONSerialization.data(withJSONObject: event)
+        let jsonString = String(data: jsonData, encoding: .utf8)!
+
+        try await ws.send(.string(jsonString))
+    }
+
+    public func commitAudio() async throws {
+        guard let ws = webSocket else {
+            throw TranscriptionError.notInitialized
+        }
+
+        let event: [String: Any] = [
+            "type": "input_audio_buffer.commit"
+        ]
+
+        let jsonData = try JSONSerialization.data(withJSONObject: event)
+        let jsonString = String(data: jsonData, encoding: .utf8)!
+
+        try await ws.send(.string(jsonString))
+        Self.logger.debug("Audio buffer committed")
+    }
+
+    public func getTranscription() -> String {
+        return accumulatedText
+    }
+
+    public func clearTranscription() {
+        accumulatedText = ""
+    }
+
+    public func setPartialTranscriptionHandler(_ handler: (@Sendable (String) -> Void)?) {
+        partialTranscriptionHandler = handler
+    }
+
+    private func configureSession() async throws {
+        guard let ws = webSocket else { return }
+
+        var sessionConfig: [String: Any] = [
+            "type": "transcription_session.update",
+            "session": [
+                "input_audio_format": "pcm16",
+                "input_audio_transcription": [
+                    "model": model
+                ] as [String: Any],
+                "turn_detection": [
+                    "type": "server_vad",
+                    "threshold": 0.5,
+                    "prefix_padding_ms": 300,
+                    "silence_duration_ms": 500
+                ] as [String: Any]
+            ] as [String: Any]
+        ]
+
+        if let lang = language {
+            var session = sessionConfig["session"] as! [String: Any]
+            var transcription = session["input_audio_transcription"] as! [String: Any]
+            transcription["language"] = lang
+            session["input_audio_transcription"] = transcription
+            sessionConfig["session"] = session
+        }
+
+        let jsonData = try JSONSerialization.data(withJSONObject: sessionConfig)
+        let jsonString = String(data: jsonData, encoding: .utf8)!
+
+        try await ws.send(.string(jsonString))
+        Self.logger.debug("Session configuration sent")
+    }
+
+    private func startReceiving() {
+        Task { [weak self] in
+            await self?.receiveLoop()
+        }
+    }
+
+    private func receiveLoop() async {
+        guard let ws = webSocket else { return }
+
+        do {
+            while true {
+                let message = try await ws.receive()
+
+                switch message {
+                case .string(let text):
+                    await handleMessage(text)
+                case .data(let data):
+                    if let text = String(data: data, encoding: .utf8) {
+                        await handleMessage(text)
+                    }
+                @unknown default:
+                    break
+                }
+            }
+        } catch {
+            if (error as NSError).code != 57 {
+                Self.logger.error("WebSocket receive error: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    private func handleMessage(_ text: String) async {
+        guard let data = text.data(using: .utf8),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let eventType = json["type"] as? String else {
+            return
+        }
+
+        switch eventType {
+        case "transcription_session.created":
+            sessionCreated = true
+            Self.logger.debug("Transcription session created")
+
+        case "transcription_session.updated":
+            Self.logger.debug("Transcription session updated")
+
+        case "conversation.item.input_audio_transcription.delta":
+            if let delta = json["delta"] as? String {
+                accumulatedText += delta
+                Self.logger.debug("Delta: \(delta)")
+                partialTranscriptionHandler?(delta)
+            }
+
+        case "conversation.item.input_audio_transcription.completed":
+            if let transcript = json["transcript"] as? String {
+                if accumulatedText.isEmpty {
+                    accumulatedText = transcript
+                }
+                Self.logger.info("Completed: \(transcript)")
+            }
+
+        case "input_audio_buffer.speech_started":
+            Self.logger.debug("Speech started")
+
+        case "input_audio_buffer.speech_stopped":
+            Self.logger.debug("Speech stopped")
+
+        case "input_audio_buffer.committed":
+            Self.logger.debug("Audio committed by server")
+
+        case "error":
+            if let error = json["error"] as? [String: Any],
+               let message = error["message"] as? String {
+                Self.logger.error("API error: \(message)")
+            }
+
+        default:
+            Self.logger.debug("Event: \(eventType)")
+        }
+    }
+
+    private func convertToPCM16(samples: [Float]) -> Data {
+        var data = Data(capacity: samples.count * 2)
+        for sample in samples {
+            let clamped = max(-1.0, min(1.0, sample))
+            let int16Value = Int16(clamped * Float(Int16.max))
+            withUnsafeBytes(of: int16Value.littleEndian) { bytes in
+                data.append(contentsOf: bytes)
+            }
+        }
+        return data
+    }
+}
