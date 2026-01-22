@@ -32,7 +32,7 @@ public final class OpenAIRealtimeController {
     private let maxListeningDuration: TimeInterval = 60.0
     private var maxDurationTimer: Timer?
     private var silenceTimer: Timer?
-    private let silenceTimeout: TimeInterval = 1.5
+    private let silenceTimeout: TimeInterval = 5.0
     private var lastTranscriptionTime: Date?
 
     private let inputSampleRate: Double = 24000
