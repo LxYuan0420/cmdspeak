@@ -1,8 +1,10 @@
 import AVFoundation
-import XCTest
+import Testing
 @testable import CmdSpeakCore
 
-final class VADTests: XCTestCase {
+@Suite("Voice Activity Detector Tests")
+struct VADTests {
+    @Test("Speech start is detected on loud audio")
     func testSpeechDetection() {
         let vad = VoiceActivityDetector(
             energyThreshold: 0.01,
@@ -16,20 +18,20 @@ final class VADTests: XCTestCase {
         let loudBuffer = createTestBuffer(amplitude: 0.5, frameCount: 1600)
         vad.process(buffer: loudBuffer)
 
-        XCTAssertTrue(speechStarted)
+        #expect(speechStarted == true)
     }
 
-    func testSilenceDetection() {
-        let expectation = XCTestExpectation(description: "Speech end detected")
-
+    @Test("Speech end is detected after silence")
+    func testSilenceDetection() async {
         let vad = VoiceActivityDetector(
             energyThreshold: 0.01,
             silenceDuration: 0.05,
             sampleRate: 16000
         )
 
+        var speechEnded = false
         vad.onSpeechStart = {}
-        vad.onSpeechEnd = { expectation.fulfill() }
+        vad.onSpeechEnd = { speechEnded = true }
 
         let loudBuffer = createTestBuffer(amplitude: 0.5, frameCount: 1600)
         vad.process(buffer: loudBuffer)
@@ -37,12 +39,13 @@ final class VADTests: XCTestCase {
         for _ in 0..<10 {
             let silentBuffer = createTestBuffer(amplitude: 0.001, frameCount: 1600)
             vad.process(buffer: silentBuffer)
-            Thread.sleep(forTimeInterval: 0.02)
+            try? await Task.sleep(nanoseconds: 20_000_000)
         }
 
-        wait(for: [expectation], timeout: 1.0)
+        #expect(speechEnded == true)
     }
 
+    @Test("Reset allows speech start to trigger again")
     func testReset() {
         let vad = VoiceActivityDetector()
 
@@ -56,7 +59,20 @@ final class VADTests: XCTestCase {
 
         vad.process(buffer: loudBuffer)
 
-        XCTAssertEqual(speechStartCount, 2)
+        #expect(speechStartCount == 2)
+    }
+
+    @Test("Silent audio does not trigger speech start")
+    func testSilentAudio() {
+        let vad = VoiceActivityDetector(energyThreshold: 0.01)
+
+        var speechStarted = false
+        vad.onSpeechStart = { speechStarted = true }
+
+        let silentBuffer = createTestBuffer(amplitude: 0.001, frameCount: 1600)
+        vad.process(buffer: silentBuffer)
+
+        #expect(speechStarted == false)
     }
 
     private func createTestBuffer(amplitude: Float, frameCount: AVAudioFrameCount) -> AVAudioPCMBuffer {

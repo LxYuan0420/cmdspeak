@@ -1,28 +1,33 @@
-import XCTest
+import Foundation
+import Testing
 @testable import CmdSpeakCore
 
-final class ConfigTests: XCTestCase {
+@Suite("Config Tests")
+struct ConfigTests {
+    @Test("Default config has expected values")
     func testDefaultConfig() {
         let config = Config.default
 
-        XCTAssertEqual(config.model.type, "local")
-        XCTAssertEqual(config.model.name, "openai_whisper-base")
-        XCTAssertEqual(config.hotkey.trigger, "double-tap-right-option")
-        XCTAssertEqual(config.hotkey.intervalMs, 300)
-        XCTAssertEqual(config.audio.sampleRate, 16000)
-        XCTAssertEqual(config.audio.silenceThresholdMs, 500)
-        XCTAssertTrue(config.feedback.soundEnabled)
-        XCTAssertTrue(config.feedback.menuBarIcon)
+        #expect(config.model.type == "local")
+        #expect(config.model.name == "openai_whisper-base")
+        #expect(config.hotkey.trigger == "double-tap-right-option")
+        #expect(config.hotkey.intervalMs == 300)
+        #expect(config.audio.sampleRate == 16000)
+        #expect(config.audio.silenceThresholdMs == 500)
+        #expect(config.feedback.soundEnabled == true)
+        #expect(config.feedback.menuBarIcon == true)
     }
 
+    @Test("Model config stores values correctly")
     func testModelConfig() {
         let model = ModelConfig(type: "api", name: "gpt-4o-transcribe", provider: "openai")
 
-        XCTAssertEqual(model.type, "api")
-        XCTAssertEqual(model.name, "gpt-4o-transcribe")
-        XCTAssertEqual(model.provider, "openai")
+        #expect(model.type == "api")
+        #expect(model.name == "gpt-4o-transcribe")
+        #expect(model.provider == "openai")
     }
 
+    @Test("Hotkey config is Codable")
     func testHotkeyConfigCodable() throws {
         let config = HotkeyConfig(trigger: "double-tap-left-cmd", intervalMs: 200)
 
@@ -32,7 +37,20 @@ final class ConfigTests: XCTestCase {
         let decoder = JSONDecoder()
         let decoded = try decoder.decode(HotkeyConfig.self, from: data)
 
-        XCTAssertEqual(decoded.trigger, "double-tap-left-cmd")
-        XCTAssertEqual(decoded.intervalMs, 200)
+        #expect(decoded.trigger == "double-tap-left-cmd")
+        #expect(decoded.intervalMs == 200)
+    }
+
+    @Test("Translation config is preserved")
+    func testTranslationConfig() {
+        let model = ModelConfig(
+            type: "local",
+            name: "whisper-base",
+            language: "zh",
+            translateToEnglish: true
+        )
+
+        #expect(model.language == "zh")
+        #expect(model.translateToEnglish == true)
     }
 }
