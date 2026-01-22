@@ -10,7 +10,7 @@ struct CmdSpeakCLI: AsyncParsableCommand {
         commandName: "cmdspeak",
         abstract: "Drop-in replacement for macOS Dictation",
         version: CmdSpeakCore.version,
-        subcommands: [Status.self, TestMic.self, TestHotkey.self, TestTranscribe.self, TestIntegration.self, Reload.self, Run.self],
+        subcommands: [Status.self, TestMic.self, TestHotkey.self, TestTranscribe.self, TestIntegration.self, TestOpenAI.self, Reload.self, Run.self, RunOpenAI.self],
         defaultSubcommand: Run.self
     )
 }
@@ -307,13 +307,11 @@ struct TestTranscribe: AsyncParsableCommand {
         print("Recording for \(duration) seconds...")
         print("Speak now!")
 
-        var permissionGranted = false
-        let semaphore = DispatchSemaphore(value: 0)
-        AVCaptureDevice.requestAccess(for: .audio) { granted in
-            permissionGranted = granted
-            semaphore.signal()
+        let permissionGranted = await withCheckedContinuation { continuation in
+            AVCaptureDevice.requestAccess(for: .audio) { granted in
+                continuation.resume(returning: granted)
+            }
         }
-        semaphore.wait()
 
         guard permissionGranted else {
             print("✗ Microphone permission denied")
@@ -340,9 +338,7 @@ struct TestTranscribe: AsyncParsableCommand {
         try await Task.sleep(nanoseconds: UInt64(duration) * 1_000_000_000)
         session.stopRunning()
 
-        delegate.lock.lock()
-        let samples = delegate.samples
-        delegate.lock.unlock()
+        let samples = delegate.getSamples()
 
         let durationSec = Double(samples.count) / 16000.0
         print("")
@@ -368,8 +364,20 @@ struct TestTranscribe: AsyncParsableCommand {
 }
 
 final class AudioCollector: NSObject, AVCaptureAudioDataOutputSampleBufferDelegate {
-    var samples: [Float] = []
-    let lock = NSLock()
+    private var samples: [Float] = []
+    private let lock = NSLock()
+
+    func getSamples() -> [Float] {
+        lock.lock()
+        defer { lock.unlock() }
+        return samples
+    }
+
+    func getCount() -> Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return samples.count
+    }
 
     func captureOutput(
         _ output: AVCaptureOutput,
@@ -458,9 +466,7 @@ struct TestIntegration: ParsableCommand {
 
         let config = try ConfigManager.shared.load()
         var hotkeyTriggered = false
-        var isListening = false
         var audioSamples: [Float] = []
-        let audioLock = NSLock()
 
         let hotkeyManager = HotkeyManager(
             doubleTapInterval: TimeInterval(config.hotkey.intervalMs) / 1000.0
@@ -515,7 +521,6 @@ struct TestIntegration: ParsableCommand {
         session.addOutput(output)
 
         session.startRunning()
-        isListening = true
         print("✓ Recording started")
 
         var lastLogTime = Date()
@@ -523,20 +528,15 @@ struct TestIntegration: ParsableCommand {
         while Date() < recordDeadline {
             RunLoop.current.run(until: Date().addingTimeInterval(0.1))
             if Date().timeIntervalSince(lastLogTime) >= 0.5 {
-                collector.lock.lock()
-                let count = collector.samples.count
-                collector.lock.unlock()
+                let count = collector.getCount()
                 print("  [Audio] \(count) samples (\(String(format: "%.1f", Double(count) / 16000.0))s)")
                 lastLogTime = Date()
             }
         }
 
         session.stopRunning()
-        isListening = false
 
-        collector.lock.lock()
-        audioSamples = collector.samples
-        collector.lock.unlock()
+        audioSamples = collector.getSamples()
 
         print("✓ Recording stopped: \(audioSamples.count) samples (\(String(format: "%.1f", Double(audioSamples.count) / 16000.0))s)")
 
@@ -614,6 +614,258 @@ struct Reload: ParsableCommand {
     }
 }
 
+struct TestOpenAI: ParsableCommand {
+    static let configuration = CommandConfiguration(
+        commandName: "test-openai",
+        abstract: "Test OpenAI Realtime API transcription"
+    )
+
+    @Option(name: .shortAndLong, help: "Duration in seconds")
+    var duration: Int = 5
+
+    func run() throws {
+        print("Testing OpenAI Realtime API...")
+
+        guard let apiKey = ProcessInfo.processInfo.environment["OPENAI_API_KEY"], !apiKey.isEmpty else {
+            print("✗ OPENAI_API_KEY environment variable not set")
+            return
+        }
+        print("✓ API key found")
+
+        let semaphore = DispatchSemaphore(value: 0)
+        var finalTranscription: String = ""
+
+        Task { @MainActor in
+            do {
+                let engine = OpenAIRealtimeEngine(apiKey: apiKey, model: "gpt-4o-transcribe")
+                try await engine.initialize()
+                print("✓ Engine initialized")
+
+                try await engine.connect()
+                print("✓ WebSocket connected")
+                print("")
+                print("Speak now for \(duration) seconds...")
+                print("")
+
+                await engine.setPartialTranscriptionHandler { delta in
+                    print(delta, terminator: "")
+                    fflush(stdout)
+                }
+
+                guard let device = AVCaptureDevice.default(for: .audio) else {
+                    print("✗ No audio device")
+                    semaphore.signal()
+                    return
+                }
+
+                let session = AVCaptureSession()
+                session.sessionPreset = .high
+                let input = try AVCaptureDeviceInput(device: device)
+                session.addInput(input)
+
+                let output = AVCaptureAudioDataOutput()
+                let collector = RealtimeAudioSender(engine: engine)
+                let queue = DispatchQueue(label: "test-openai-audio", qos: .userInteractive)
+                output.setSampleBufferDelegate(collector, queue: queue)
+                session.addOutput(output)
+
+                session.startRunning()
+                print("[Recording...]")
+
+                try await Task.sleep(nanoseconds: UInt64(duration) * 1_000_000_000)
+
+                session.stopRunning()
+                print("")
+                print("[Recording stopped]")
+
+                try await engine.commitAudio()
+                try await Task.sleep(nanoseconds: 1_000_000_000)
+
+                finalTranscription = await engine.getTranscription()
+                await engine.disconnect()
+            } catch {
+                print("✗ Error: \(error.localizedDescription)")
+            }
+            semaphore.signal()
+        }
+
+        while semaphore.wait(timeout: .now()) == .timedOut {
+            RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+        }
+
+        print("")
+        print("═══════════════════════════════════════")
+        print("Final transcription: \(finalTranscription)")
+        print("═══════════════════════════════════════")
+    }
+}
+
+final class RealtimeAudioSender: NSObject, AVCaptureAudioDataOutputSampleBufferDelegate {
+    private let engine: OpenAIRealtimeEngine
+    private let targetSampleRate: Double = 24000
+
+    init(engine: OpenAIRealtimeEngine) {
+        self.engine = engine
+    }
+
+    func captureOutput(
+        _ output: AVCaptureOutput,
+        didOutput sampleBuffer: CMSampleBuffer,
+        from connection: AVCaptureConnection
+    ) {
+        guard let formatDesc = CMSampleBufferGetFormatDescription(sampleBuffer),
+              let asbd = CMAudioFormatDescriptionGetStreamBasicDescription(formatDesc),
+              let blockBuffer = CMSampleBufferGetDataBuffer(sampleBuffer) else {
+            return
+        }
+
+        let sourceSampleRate = asbd.pointee.mSampleRate
+        let channels = asbd.pointee.mChannelsPerFrame
+        let bitsPerChannel = asbd.pointee.mBitsPerChannel
+        let formatFlags = asbd.pointee.mFormatFlags
+        let isFloat = (formatFlags & kAudioFormatFlagIsFloat) != 0
+        let isSignedInt = (formatFlags & kAudioFormatFlagIsSignedInteger) != 0
+
+        let frameCount = CMSampleBufferGetNumSamples(sampleBuffer)
+        guard frameCount > 0 else { return }
+
+        var length = 0
+        var dataPointer: UnsafeMutablePointer<Int8>?
+        CMBlockBufferGetDataPointer(blockBuffer, atOffset: 0, lengthAtOffsetOut: nil, totalLengthOut: &length, dataPointerOut: &dataPointer)
+        guard let data = dataPointer, length > 0 else { return }
+
+        var floatSamples = [Float](repeating: 0, count: frameCount)
+
+        if isFloat && bitsPerChannel == 32 {
+            let floatData = UnsafeRawPointer(data).bindMemory(to: Float.self, capacity: frameCount * Int(channels))
+            for i in 0..<frameCount {
+                floatSamples[i] = floatData[i * Int(channels)]
+            }
+        } else if isSignedInt && bitsPerChannel == 16 {
+            let int16Data = UnsafeRawPointer(data).bindMemory(to: Int16.self, capacity: frameCount * Int(channels))
+            for i in 0..<frameCount {
+                floatSamples[i] = Float(int16Data[i * Int(channels)]) / Float(Int16.max)
+            }
+        } else if isSignedInt && bitsPerChannel == 32 {
+            let int32Data = UnsafeRawPointer(data).bindMemory(to: Int32.self, capacity: frameCount * Int(channels))
+            for i in 0..<frameCount {
+                floatSamples[i] = Float(int32Data[i * Int(channels)]) / Float(Int32.max)
+            }
+        } else {
+            return
+        }
+
+        let ratio = sourceSampleRate / targetSampleRate
+        let outputLength = Int(Double(frameCount) / ratio)
+        guard outputLength > 0 else { return }
+
+        var resampled = [Float](repeating: 0, count: outputLength)
+        for i in 0..<outputLength {
+            let srcIndex = Int(Double(i) * ratio)
+            if srcIndex < frameCount {
+                resampled[i] = floatSamples[srcIndex]
+            }
+        }
+
+        Task {
+            try? await engine.sendAudio(samples: resampled)
+        }
+    }
+}
+
+struct RunOpenAI: ParsableCommand {
+    static let configuration = CommandConfiguration(
+        commandName: "run-openai",
+        abstract: "Run CmdSpeak with OpenAI Realtime API"
+    )
+
+    func run() throws {
+        print("CmdSpeak v\(CmdSpeakCore.version) (OpenAI Realtime Mode)")
+
+        guard let apiKey = ProcessInfo.processInfo.environment["OPENAI_API_KEY"], !apiKey.isEmpty else {
+            print("Error: OPENAI_API_KEY environment variable not set")
+            return
+        }
+
+        var config = try ConfigManager.shared.load()
+        config.model.type = "openai-realtime"
+        config.model.apiKey = apiKey
+        if config.model.name.isEmpty || config.model.name.hasPrefix("openai_whisper") {
+            config.model.name = "gpt-4o-transcribe"
+        }
+
+        let semaphore = DispatchSemaphore(value: 0)
+        var startError: Error?
+
+        class ControllerHolder {
+            var controller: OpenAIRealtimeController?
+        }
+        let holder = ControllerHolder()
+
+        Task { @MainActor in
+            let ctrl = OpenAIRealtimeController(config: config)
+            holder.controller = ctrl
+
+            ctrl.onStateChange = { state in
+                switch state {
+                case .idle:
+                    print("\r🎤 Ready", terminator: "")
+                    fflush(stdout)
+                case .connecting:
+                    print("\r🔗 Connecting...", terminator: "")
+                    fflush(stdout)
+                case .listening:
+                    print("\r🔴 Listening: ", terminator: "")
+                    fflush(stdout)
+                case .processing:
+                    break
+                case .error(let message):
+                    print("\n❌ \(message)")
+                    fflush(stdout)
+                }
+            }
+
+            ctrl.onPartialTranscription = { delta in
+                print(delta, terminator: "")
+                fflush(stdout)
+            }
+
+            ctrl.onFinalTranscription = { _ in
+                print(" ✓")
+                fflush(stdout)
+            }
+
+            do {
+                try await ctrl.start()
+            } catch {
+                startError = error
+            }
+            semaphore.signal()
+        }
+
+        while semaphore.wait(timeout: .now()) == .timedOut {
+            RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+        }
+
+        if let error = startError {
+            print("Error: \(error.localizedDescription)")
+            return
+        }
+
+        print("Double-tap Right Option to dictate (Ctrl+C to quit)")
+        fflush(stdout)
+
+        signal(SIGINT) { _ in
+            print("\nShutting down...")
+            Darwin.exit(0)
+        }
+
+        while true {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+        }
+    }
+}
+
 struct Run: ParsableCommand {
     static let configuration = CommandConfiguration(
         abstract: "Run CmdSpeak (default)"
@@ -626,165 +878,50 @@ struct Run: ParsableCommand {
         let config = try ConfigManager.shared.load()
         try ConfigManager.shared.createDefaultIfNeeded()
 
-        let engine = WhisperKitEngine(
-            modelName: config.model.name,
-            language: config.model.language,
-            translateToEnglish: config.model.translateToEnglish
-        )
-        let hotkeyManager = HotkeyManager(
-            doubleTapInterval: TimeInterval(config.hotkey.intervalMs) / 1000.0
-        )
-        let injector = TextInjector()
-
-        var isRunning = true
-        var isListening = false
-        var listeningStartTime: Date?
-        let minListeningDuration: TimeInterval = 0.5
-        var audioCollector: AudioCollector?
-        var captureSession: AVCaptureSession?
-
         let semaphore = DispatchSemaphore(value: 0)
-        var engineReady = false
-        var engineError: Error?
+        var startError: Error?
 
-        Task {
+        class ControllerHolder {
+            var controller: CmdSpeakController?
+        }
+        let holder = ControllerHolder()
+
+        Task { @MainActor in
+            let ctrl = CmdSpeakController(config: config)
+            holder.controller = ctrl
+
+            ctrl.onStateChange = { state in
+                switch state {
+                case .idle:
+                    print("\n🎤 Ready - Double-tap Right Option to dictate")
+                    fflush(stdout)
+                case .listening:
+                    print("\n🔴 LISTENING - Speak now! (double-tap again to stop)")
+                    fflush(stdout)
+                case .processing:
+                    print("\n⏳ Processing...")
+                    fflush(stdout)
+                case .injecting:
+                    break
+                case .error(let message):
+                    print("❌ Error: \(message)")
+                    fflush(stdout)
+                }
+            }
+
             do {
-                try await engine.initialize()
-                engineReady = true
+                try await ctrl.start()
             } catch {
-                engineError = error
+                startError = error
             }
             semaphore.signal()
         }
 
         while semaphore.wait(timeout: .now()) == .timedOut {
-            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+            RunLoop.main.run(until: Date().addingTimeInterval(0.1))
         }
 
-        if let error = engineError {
-            print("Error loading model: \(error.localizedDescription)")
-            return
-        }
-
-        func startListening() {
-            guard !isListening else { return }
-
-            guard let device = AVCaptureDevice.default(for: .audio) else {
-                print("❌ No audio device")
-                return
-            }
-
-            do {
-                let session = AVCaptureSession()
-                session.sessionPreset = .high
-                let input = try AVCaptureDeviceInput(device: device)
-                session.addInput(input)
-
-                let output = AVCaptureAudioDataOutput()
-                let collector = AudioCollector()
-                let queue = DispatchQueue(label: "cmdspeak-audio", qos: .userInteractive)
-                output.setSampleBufferDelegate(collector, queue: queue)
-                session.addOutput(output)
-
-                session.startRunning()
-                captureSession = session
-                audioCollector = collector
-                isListening = true
-                listeningStartTime = Date()
-
-                if config.feedback.soundEnabled {
-                    NSSound(named: "Tink")?.play()
-                }
-
-                print("\n🔴 LISTENING - Speak now! (double-tap again to stop)")
-                fflush(stdout)
-            } catch {
-                print("❌ Audio error: \(error.localizedDescription)")
-            }
-        }
-
-        func stopListeningAndTranscribe() {
-            guard isListening else { return }
-
-            captureSession?.stopRunning()
-            captureSession = nil
-            isListening = false
-            listeningStartTime = nil
-
-            guard let collector = audioCollector else {
-                print("❌ No audio collected")
-                return
-            }
-
-            collector.lock.lock()
-            let samples = collector.samples
-            collector.lock.unlock()
-            audioCollector = nil
-
-            let durationSec = Double(samples.count) / 16000.0
-            print("\n⏳ Processing \(String(format: "%.1f", durationSec))s of audio...")
-            fflush(stdout)
-
-            guard samples.count > 1600 else {
-                print("❌ Too short (\(String(format: "%.1f", durationSec))s)")
-                print("\n🎤 Ready - Double-tap Right Option to dictate")
-                fflush(stdout)
-                return
-            }
-
-            let transcribeSemaphore = DispatchSemaphore(value: 0)
-            var result: String?
-            var transcribeError: Error?
-
-            Task {
-                do {
-                    let transcription = try await engine.transcribe(audioSamples: samples)
-                    result = transcription.text
-                } catch {
-                    transcribeError = error
-                }
-                transcribeSemaphore.signal()
-            }
-
-            while transcribeSemaphore.wait(timeout: .now()) == .timedOut {
-                RunLoop.current.run(until: Date().addingTimeInterval(0.05))
-            }
-
-            if let error = transcribeError {
-                print("❌ Transcription error: \(error.localizedDescription)")
-            } else if let text = result, !text.isEmpty, text != "[BLANK_AUDIO]" {
-                print("✅ \"\(text)\"")
-                do {
-                    try injector.inject(text: text)
-                    if config.feedback.soundEnabled {
-                        NSSound(named: "Pop")?.play()
-                    }
-                } catch {
-                    print("❌ Injection error: \(error.localizedDescription)")
-                }
-            } else {
-                print("⚠️ No speech detected")
-            }
-
-            print("\n🎤 Ready - Double-tap Right Option to dictate")
-            fflush(stdout)
-        }
-
-        hotkeyManager.onHotkeyTriggered = {
-            if isListening {
-                if let startTime = listeningStartTime,
-                   Date().timeIntervalSince(startTime) < minListeningDuration {
-                    return
-                }
-                stopListeningAndTranscribe()
-            } else {
-                startListening()
-            }
-        }
-
-        do {
-            try hotkeyManager.start()
-        } catch {
+        if let error = startError {
             print("Error: \(error.localizedDescription)")
             return
         }
@@ -814,10 +951,6 @@ struct Run: ParsableCommand {
             Darwin.exit(0)
         }
 
-        while isRunning {
-            RunLoop.current.run(until: Date().addingTimeInterval(0.05))
-        }
-
-        hotkeyManager.stop()
+        dispatchMain()
     }
 }
