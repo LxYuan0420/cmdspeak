@@ -177,10 +177,10 @@ public actor OpenAIRealtimeEngine: TranscriptionEngine {
                 "input_audio_format": "pcm16",
                 "input_audio_transcription": transcriptionConfig,
                 "turn_detection": [
-                    "type": "semantic_vad",
-                    "eagerness": "high",
+                    "type": "server_vad",
+                    "threshold": 0.5,
                     "prefix_padding_ms": 100,
-                    "silence_duration_ms": 500
+                    "silence_duration_ms": 300
                 ] as [String: Any]
             ] as [String: Any]
         ]
