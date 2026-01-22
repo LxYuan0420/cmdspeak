@@ -780,8 +780,6 @@ struct RunOpenAI: ParsableCommand {
     )
 
     func run() throws {
-        print("CmdSpeak v0.1.0 (OpenAI Realtime)")
-
         guard let apiKey = ProcessInfo.processInfo.environment["OPENAI_API_KEY"], !apiKey.isEmpty else {
             print("Error: OPENAI_API_KEY environment variable not set")
             return
@@ -809,16 +807,16 @@ struct RunOpenAI: ParsableCommand {
             ctrl.onStateChange = { state in
                 switch state {
                 case .idle:
-                    print("\n🎤 Ready")
+                    print("\n⌥⌥ Double-tap Right Option to dictate")
                     fflush(stdout)
                 case .connecting:
-                    print("🔗 Connecting...")
+                    print("   Connecting...", terminator: "")
                     fflush(stdout)
                 case .listening:
-                    print("🎙️  ", terminator: "")
+                    print("\r🎙️  ", terminator: "")
                     fflush(stdout)
                 case .error(let message):
-                    print("❌ \(message)")
+                    print("\n❌ \(message)")
                     fflush(stdout)
                 }
             }
@@ -829,7 +827,7 @@ struct RunOpenAI: ParsableCommand {
             }
 
             ctrl.onFinalTranscription = { _ in
-                print(" ✓")
+                print("")
                 fflush(stdout)
             }
 
@@ -850,12 +848,11 @@ struct RunOpenAI: ParsableCommand {
             return
         }
 
-        print("Double-tap Right Option to dictate (5s silence auto-injects)")
-        print("Ctrl+C to quit")
+        print("CmdSpeak ready. Ctrl+C to quit.")
         fflush(stdout)
 
         signal(SIGINT) { _ in
-            print("\nShutting down...")
+            print("\n")
             Darwin.exit(0)
         }
 

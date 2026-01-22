@@ -74,7 +74,7 @@ public struct AudioConfig: Codable, Sendable {
     public var sampleRate: Int
     public var silenceThresholdMs: Int
 
-    public init(sampleRate: Int = 16000, silenceThresholdMs: Int = 2000) {
+    public init(sampleRate: Int = 16000, silenceThresholdMs: Int = 10000) {
         self.sampleRate = sampleRate
         self.silenceThresholdMs = silenceThresholdMs
     }
