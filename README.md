@@ -142,9 +142,20 @@ Double-tap Option -> AudioCapture -> VAD -> WhisperKit -> TextInjection -> Curso
 ## Development
 
 ```bash
-swift build           # Debug build
+swift build             # Debug build
 swift build -c release  # Release build
-swift test            # Run tests (requires Xcode)
+swift test              # Run tests
+swiftlint               # Lint code
+swiftformat .           # Format code
+```
+
+### Test Commands
+
+```bash
+.build/debug/cmdspeak test-mic          # Test microphone capture
+.build/debug/cmdspeak test-hotkey       # Test hotkey detection
+.build/debug/cmdspeak test-transcribe   # Test model + transcription
+.build/debug/cmdspeak test-integration  # Test full pipeline
 ```
 
 ## License

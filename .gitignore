@@ -1,4 +1,7 @@
-spec.md
+# Documentation (except README)
+*.md
+!README.md
+
 .build/
 .swiftpm/
 *.xcodeproj/
