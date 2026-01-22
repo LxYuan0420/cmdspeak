@@ -7,18 +7,19 @@ public actor WhisperKitEngine: TranscriptionEngine {
     private let modelName: String
     private let language: String?
     private let translateToEnglish: Bool
+    private var _isInitialized: Bool = false
 
-    public nonisolated var isReady: Bool {
-        false
+    public var isReady: Bool {
+        _isInitialized
     }
 
     /// Initialize the engine with a model name.
     /// - Parameters:
-    ///   - modelName: Model to use (e.g., "large-v3-turbo", "base", "small")
+    ///   - modelName: Model to use (e.g., "openai_whisper-base", "openai_whisper-small", "openai_whisper-large-v3-turbo")
     ///   - language: Source language (nil for auto-detect)
     ///   - translateToEnglish: If true, translate non-English speech to English
     public init(
-        modelName: String = "large-v3-turbo",
+        modelName: String = "openai_whisper-base",
         language: String? = nil,
         translateToEnglish: Bool = false
     ) {
@@ -30,6 +31,7 @@ public actor WhisperKitEngine: TranscriptionEngine {
     public func initialize() async throws {
         do {
             whisperKit = try await WhisperKit(model: modelName)
+            _isInitialized = true
         } catch {
             throw TranscriptionError.modelLoadFailed(error.localizedDescription)
         }
@@ -72,5 +74,6 @@ public actor WhisperKitEngine: TranscriptionEngine {
 
     public func unload() {
         whisperKit = nil
+        _isInitialized = false
     }
 }

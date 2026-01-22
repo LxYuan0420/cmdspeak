@@ -15,6 +15,7 @@ public final class HotkeyManager: HotkeyManaging {
 
     private var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
+    private var isStarted = false
 
     private var lastRightOptionTime: Date?
     private let doubleTapInterval: TimeInterval
@@ -26,6 +27,8 @@ public final class HotkeyManager: HotkeyManaging {
     }
 
     public func start() throws {
+        guard !isStarted else { return }
+
         if !checkAccessibilityPermission() {
             requestAccessibilityPermission()
             throw HotkeyError.accessibilityNotGranted
@@ -39,7 +42,7 @@ public final class HotkeyManager: HotkeyManaging {
             options: .defaultTap,
             eventsOfInterest: eventMask,
             callback: { _, type, event, refcon in
-                guard let refcon = refcon else { return Unmanaged.passRetained(event) }
+                guard let refcon = refcon else { return Unmanaged.passUnretained(event) }
                 let manager = Unmanaged<HotkeyManager>.fromOpaque(refcon).takeUnretainedValue()
                 return manager.handleEvent(type: type, event: event)
             },
@@ -53,6 +56,7 @@ public final class HotkeyManager: HotkeyManaging {
         runLoopSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
         CFRunLoopAddSource(CFRunLoopGetMain(), runLoopSource, .commonModes)
         CGEvent.tapEnable(tap: tap, enable: true)
+        isStarted = true
     }
 
     public func checkAccessibilityPermission() -> Bool {
@@ -73,11 +77,19 @@ public final class HotkeyManager: HotkeyManaging {
         }
         eventTap = nil
         runLoopSource = nil
+        isStarted = false
     }
 
     private func handleEvent(type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent>? {
+        if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
+            if let tap = eventTap {
+                CGEvent.tapEnable(tap: tap, enable: true)
+            }
+            return nil
+        }
+
         guard type == .flagsChanged else {
-            return Unmanaged.passRetained(event)
+            return Unmanaged.passUnretained(event)
         }
 
         let flags = event.flags
@@ -102,7 +114,7 @@ public final class HotkeyManager: HotkeyManaging {
             }
         }
 
-        return Unmanaged.passRetained(event)
+        return Unmanaged.passUnretained(event)
     }
 
     deinit {

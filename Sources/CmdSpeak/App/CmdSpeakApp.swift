@@ -164,7 +164,7 @@ struct MenuBarView: View {
 
 struct SettingsView: View {
     @EnvironmentObject var appState: AppState
-    @State private var modelName = "large-v3-turbo"
+    @State private var modelName = "openai_whisper-base"
     @State private var silenceThresholdMs = 500
     @State private var soundEnabled = true
 
@@ -173,7 +173,7 @@ struct SettingsView: View {
             Section("Model") {
                 TextField("Model Name", text: $modelName)
                     .textFieldStyle(.roundedBorder)
-                Text("e.g., large-v3-turbo, base, small")
+                Text("e.g., openai_whisper-base, openai_whisper-small, openai_whisper-large-v3-turbo")
                     .font(.caption)
                     .foregroundColor(.secondary)
             }
