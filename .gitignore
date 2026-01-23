@@ -1,6 +1,7 @@
-# Documentation (except README)
+# Documentation
 *.md
 !README.md
+PRODUCT.md
 
 .build/
 .swiftpm/
