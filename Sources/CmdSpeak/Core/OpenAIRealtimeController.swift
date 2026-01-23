@@ -9,10 +9,11 @@ import os
 public final class OpenAIRealtimeController {
     private static let logger = Logger(subsystem: "com.cmdspeak", category: "realtime-controller")
 
-    public enum State: Sendable {
+    public enum State: Sendable, Equatable {
         case idle
         case connecting
         case listening
+        case finalizing
         case error(String)
     }
 
@@ -27,12 +28,21 @@ public final class OpenAIRealtimeController {
     private let injector: TextInjector
     private let hotkeyManager: HotkeyManager
 
-    private var isConnected: Bool = false
     private var silenceTimer: Timer?
     private let silenceTimeout: TimeInterval
     private var pendingText: String = ""
 
+    private var currentSessionID: UUID?
+    private var audioSendTask: Task<Void, Never>?
+    private var audioBufferContinuation: AsyncStream<[Float]>.Continuation?
+
+    private static let maxReconnectAttempts = 3
+    private static let reconnectBaseDelay: TimeInterval = 0.5
+    private static let finalTranscriptTimeout: TimeInterval = 3.0
+    private static let maxAudioBufferQueue = 50
+
     private let inputSampleRate: Double = 24000
+    private var droppedBufferCount = 0
 
     public init(config: Config) {
         self.config = config
@@ -80,13 +90,74 @@ public final class OpenAIRealtimeController {
                     self?.handlePartialTranscription(delta)
                 }
             }
+
+            await engine.setOnDisconnect { [weak self] wasIntentional in
+                Task { @MainActor in
+                    await self?.handleUnexpectedDisconnect(wasIntentional: wasIntentional)
+                }
+            }
+
+            await engine.setOnError { [weak self] message in
+                Task { @MainActor in
+                    self?.handleEngineError(message)
+                }
+            }
         }
     }
 
     private func handlePartialTranscription(_ delta: String) {
+        guard case .listening = state else { return }
         pendingText += delta
         onPartialTranscription?(delta)
         resetSilenceTimer()
+    }
+
+    private func handleUnexpectedDisconnect(wasIntentional: Bool) async {
+        guard !wasIntentional, case .listening = state else { return }
+
+        Self.logger.warning("Unexpected disconnect during listening")
+        audioCapture.stopRecording()
+        silenceTimer?.invalidate()
+        silenceTimer = nil
+
+        let savedSessionID = currentSessionID
+        let savedText = pendingText
+
+        for attempt in 1...Self.maxReconnectAttempts {
+            guard currentSessionID == savedSessionID else {
+                Self.logger.info("Session changed, aborting reconnect")
+                return
+            }
+
+            let delay = Self.reconnectBaseDelay * pow(2.0, Double(attempt - 1))
+            let jitter = Double.random(in: 0...0.3)
+            Self.logger.info("Reconnect attempt \(attempt)/\(Self.maxReconnectAttempts) in \(delay + jitter)s")
+
+            try? await Task.sleep(nanoseconds: UInt64((delay + jitter) * 1_000_000_000))
+
+            guard currentSessionID == savedSessionID else { return }
+
+            do {
+                try await engine.connect()
+                try await audioCapture.startRecording()
+                pendingText = savedText
+                resetSilenceTimer()
+                Self.logger.info("Reconnected successfully")
+                return
+            } catch {
+                Self.logger.error("Reconnect attempt \(attempt) failed: \(error.localizedDescription)")
+            }
+        }
+
+        Self.logger.error("All reconnect attempts failed")
+        await finishAndInject()
+    }
+
+    private func handleEngineError(_ message: String) {
+        if message.contains("invalid_api_key") || message.contains("authentication") {
+            Self.logger.error("Authentication error - not retrying")
+            setState(.error("Invalid API key"))
+        }
     }
 
     private func resetSilenceTimer() {
@@ -103,14 +174,32 @@ public final class OpenAIRealtimeController {
     }
 
     private func finishAndInject() async {
+        let sessionID = currentSessionID
+        guard case .listening = state else { return }
+
+        setState(.finalizing)
         silenceTimer?.invalidate()
         silenceTimer = nil
         audioCapture.stopRecording()
-        await engine.disconnect()
-        isConnected = false
+        stopAudioSendPipeline()
 
-        let text = pendingText.trimmingCharacters(in: .whitespacesAndNewlines)
+        do {
+            try await engine.commitAudio()
+        } catch {
+            Self.logger.warning("Failed to commit audio: \(error.localizedDescription)")
+        }
+
+        let finalText = await engine.awaitFinalTranscript(timeout: Self.finalTranscriptTimeout)
+        await engine.disconnect()
+
+        guard currentSessionID == sessionID else {
+            Self.logger.info("Session changed during finalization, discarding")
+            return
+        }
+
+        let text = finalText.trimmingCharacters(in: .whitespacesAndNewlines)
         pendingText = ""
+        currentSessionID = nil
 
         if !text.isEmpty {
             onFinalTranscription?(text)
@@ -126,6 +215,8 @@ public final class OpenAIRealtimeController {
     }
 
     public func start() async throws {
+        try validateConfig()
+
         Self.logger.info("Initializing OpenAI Realtime Engine")
         try await engine.initialize()
         Self.logger.info("Engine initialized")
@@ -146,10 +237,27 @@ public final class OpenAIRealtimeController {
         throw HotkeyError.accessibilityNotGranted
     }
 
+    private func validateConfig() throws {
+        let apiKey = Self.resolveEnvValue(config.model.apiKey ?? "env:OPENAI_API_KEY")
+        guard !apiKey.isEmpty else {
+            throw ConfigurationError.missingAPIKey
+        }
+
+        guard config.audio.silenceThresholdMs >= 1000 && config.audio.silenceThresholdMs <= 60000 else {
+            throw ConfigurationError.invalidSilenceThreshold(config.audio.silenceThresholdMs)
+        }
+
+        guard config.hotkey.intervalMs >= 100 && config.hotkey.intervalMs <= 1000 else {
+            throw ConfigurationError.invalidHotkeyInterval(config.hotkey.intervalMs)
+        }
+    }
+
     public func stop() {
+        currentSessionID = nil
         silenceTimer?.invalidate()
         silenceTimer = nil
         audioCapture.stopRecording()
+        stopAudioSendPipeline()
         hotkeyManager.stop()
         Task {
             await engine.disconnect()
@@ -162,42 +270,50 @@ public final class OpenAIRealtimeController {
         case .idle:
             await startListening()
         case .listening:
-            await cancelListening()
-        default:
+            await finishAndInject()
+        case .connecting, .finalizing:
             break
+        case .error:
+            setState(.idle)
         }
     }
 
-    private func cancelListening() async {
-        silenceTimer?.invalidate()
-        silenceTimer = nil
-        audioCapture.stopRecording()
-        await engine.disconnect()
-        isConnected = false
-        pendingText = ""
-        setState(.idle)
-    }
-
     private func startListening() async {
+        let sessionID = UUID()
+        currentSessionID = sessionID
+
         setState(.connecting)
         pendingText = ""
+        droppedBufferCount = 0
 
         do {
             try await engine.connect()
-            isConnected = true
 
+            guard currentSessionID == sessionID else {
+                Self.logger.info("Session cancelled before recording started")
+                await engine.disconnect()
+                return
+            }
+
+            startAudioSendPipeline()
             try await audioCapture.startRecording()
             playFeedbackSound(start: true)
             setState(.listening)
 
             await engine.clearTranscription()
+            resetSilenceTimer()
         } catch {
-            setState(.error(error.localizedDescription))
+            if currentSessionID == sessionID {
+                Self.logger.error("Failed to start listening: \(error.localizedDescription)")
+                stopAudioSendPipeline()
+                setState(.error(error.localizedDescription))
+                currentSessionID = nil
+            }
         }
     }
 
     private func handleAudioBuffer(_ buffer: AVAudioPCMBuffer) {
-        guard isConnected, case .listening = state else { return }
+        guard case .listening = state, currentSessionID != nil else { return }
         guard let channelData = buffer.floatChannelData?[0] else { return }
 
         let frameLength = Int(buffer.frameLength)
@@ -216,12 +332,42 @@ public final class OpenAIRealtimeController {
             }
         }
 
-        Task {
-            try? await engine.sendAudio(samples: resampled)
+        if let continuation = audioBufferContinuation {
+            continuation.yield(resampled)
+        }
+    }
+
+    private func startAudioSendPipeline() {
+        let (stream, continuation) = AsyncStream<[Float]>.makeStream(bufferingPolicy: .bufferingNewest(Self.maxAudioBufferQueue))
+        audioBufferContinuation = continuation
+
+        audioSendTask = Task { [weak self] in
+            for await samples in stream {
+                guard let self = self, !Task.isCancelled else { break }
+                do {
+                    try await self.engine.sendAudio(samples: samples)
+                } catch {
+                    Self.logger.warning("Failed to send audio: \(error.localizedDescription)")
+                }
+            }
+        }
+    }
+
+    private func stopAudioSendPipeline() {
+        audioBufferContinuation?.finish()
+        audioBufferContinuation = nil
+        audioSendTask?.cancel()
+        audioSendTask = nil
+        if droppedBufferCount > 0 {
+            let dropped = droppedBufferCount
+            Self.logger.warning("Dropped \(dropped) audio buffers this session")
+            droppedBufferCount = 0
         }
     }
 
     private func setState(_ newState: State) {
+        guard state != newState else { return }
+        Self.logger.info("State: \(String(describing: self.state)) → \(String(describing: newState))")
         state = newState
         onStateChange?(newState)
     }
@@ -230,5 +376,22 @@ public final class OpenAIRealtimeController {
         guard config.feedback.soundEnabled else { return }
         let sound: NSSound? = start ? NSSound(named: "Tink") : NSSound(named: "Pop")
         sound?.play()
+    }
+}
+
+public enum ConfigurationError: Error, LocalizedError {
+    case missingAPIKey
+    case invalidSilenceThreshold(Int)
+    case invalidHotkeyInterval(Int)
+
+    public var errorDescription: String? {
+        switch self {
+        case .missingAPIKey:
+            return "OPENAI_API_KEY is not set"
+        case .invalidSilenceThreshold(let ms):
+            return "Silence threshold \(ms)ms is out of range (1000-60000ms)"
+        case .invalidHotkeyInterval(let ms):
+            return "Hotkey interval \(ms)ms is out of range (100-1000ms)"
+        }
     }
 }
