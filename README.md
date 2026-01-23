@@ -2,12 +2,15 @@
 
 A drop-in replacement for macOS Dictation using modern speech models. Same gesture (double-tap Option), works everywhere, much better transcription.
 
+> **Current Focus:** OpenAI Realtime API for production-quality streaming transcription  
+> **Next:** MLX-based open-source models for fully on-device, private transcription
+
 ## Features
 
 - **System-wide** - Works in any text field: browsers, terminals, IDEs, Slack, etc.
 - **No UI** - Voice in, text out. No popups, no editors, no AI chat.
 - **Two modes**:
-  - **OpenAI Realtime** - Streaming transcription via API (recommended)
+  - **OpenAI Realtime** - Streaming transcription via API (recommended) ✨
   - **WhisperKit Local** - On-device inference on Apple Silicon
 - **Multi-language** - Auto-detects language, supports mixed language content
 - **Fast** - Real-time streaming transcription with OpenAI mode
@@ -135,7 +138,8 @@ sound_enabled = true
 - [x] OpenAI Realtime streaming transcription
 - [x] Local WhisperKit transcription
 - [x] Multilingual support
-- [ ] Menu bar app with visual feedback
+- [x] Menu bar app with visual feedback
+- [ ] MLX-based local models (Whisper, distil-whisper)
 - [ ] Homebrew distribution
 - [ ] WhisperKit streaming mode
 
