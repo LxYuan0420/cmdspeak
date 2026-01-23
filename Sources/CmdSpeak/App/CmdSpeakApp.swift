@@ -24,39 +24,21 @@ struct CmdSpeakApp: App {
 
 @MainActor
 final class AppState: ObservableObject {
-    @Published var controllerState: CmdSpeakController.State = .idle
-    @Published var isModelLoaded = false
+    @Published var isListening = false
+    @Published var isReady = false
+    @Published var statusText = "Initializing..."
     @Published var errorMessage: String?
+    @Published var lastTranscription: String = ""
 
-    private var controller: CmdSpeakController?
+    private var openAIController: OpenAIRealtimeController?
 
     var menuBarIcon: String {
-        switch controllerState {
-        case .idle:
-            return "mic.circle"
-        case .listening:
-            return "mic.circle.fill"
-        case .processing:
+        if !isReady {
             return "ellipsis.circle"
-        case .injecting:
-            return "text.cursor"
-        case .error:
-            return "exclamationmark.circle"
-        }
-    }
-
-    var statusText: String {
-        switch controllerState {
-        case .idle:
-            return "Ready"
-        case .listening:
-            return "Listening..."
-        case .processing:
-            return "Transcribing..."
-        case .injecting:
-            return "Injecting text..."
-        case .error(let message):
-            return "Error: \(message)"
+        } else if isListening {
+            return "mic.circle.fill"
+        } else {
+            return "mic.circle"
         }
     }
 
@@ -67,33 +49,76 @@ final class AppState: ObservableObject {
     }
 
     private func initializeController() async {
-        do {
-            let config = try ConfigManager.shared.load()
-            controller = CmdSpeakController(config: config)
+        guard let apiKey = ProcessInfo.processInfo.environment["OPENAI_API_KEY"], !apiKey.isEmpty else {
+            statusText = "OPENAI_API_KEY not set"
+            errorMessage = "Set OPENAI_API_KEY environment variable"
+            return
+        }
 
-            controller?.onStateChange = { [weak self] state in
+        do {
+            var config = try ConfigManager.shared.load()
+            config.model.type = "openai-realtime"
+            config.model.apiKey = apiKey
+            if config.model.name.isEmpty || config.model.name.hasPrefix("openai_whisper") {
+                config.model.name = "gpt-4o-transcribe"
+            }
+
+            let controller = OpenAIRealtimeController(config: config)
+            self.openAIController = controller
+
+            controller.onStateChange = { [weak self] state in
                 Task { @MainActor in
-                    self?.controllerState = state
-                    if case .error(let msg) = state {
+                    switch state {
+                    case .idle:
+                        self?.isListening = false
+                        self?.statusText = "Ready (⌥⌥ to start)"
+                    case .connecting:
+                        self?.isListening = false
+                        self?.statusText = "Connecting..."
+                    case .listening:
+                        self?.isListening = true
+                        self?.statusText = "Listening..."
+                    case .finalizing:
+                        self?.isListening = false
+                        self?.statusText = "Finalizing..."
+                    case .error(let msg):
+                        self?.isListening = false
+                        self?.statusText = "Error"
                         self?.errorMessage = msg
                     }
                 }
             }
 
-            try await controller?.start()
-            isModelLoaded = true
+            controller.onPartialTranscription = { [weak self] delta in
+                Task { @MainActor in
+                    self?.lastTranscription += delta
+                }
+            }
+
+            controller.onFinalTranscription = { [weak self] text in
+                Task { @MainActor in
+                    self?.lastTranscription = ""
+                }
+            }
+
+            try await controller.start()
+            isReady = true
+            statusText = "Ready (⌥⌥ to start)"
         } catch {
             errorMessage = error.localizedDescription
-            controllerState = .error(error.localizedDescription)
+            statusText = "Error: \(error.localizedDescription)"
         }
     }
 
     func stop() {
-        controller?.stop()
+        openAIController?.stop()
     }
 
     func reload() async {
-        controller?.stop()
+        openAIController?.stop()
+        isReady = false
+        statusText = "Reloading..."
+        lastTranscription = ""
         await initializeController()
     }
 }
@@ -111,10 +136,17 @@ struct MenuBarView: View {
                     .font(.headline)
             }
 
-            if !appState.isModelLoaded {
-                Text("Loading model...")
+            if !appState.lastTranscription.isEmpty {
+                Text(appState.lastTranscription)
                     .font(.caption)
                     .foregroundColor(.secondary)
+                    .lineLimit(2)
+            }
+
+            if let error = appState.errorMessage {
+                Text(error)
+                    .font(.caption)
+                    .foregroundColor(.red)
             }
 
             Divider()
@@ -125,14 +157,10 @@ struct MenuBarView: View {
 
             Divider()
 
-            Button("Reload Configuration") {
+            Button("Reload") {
                 Task {
                     await appState.reload()
                 }
-            }
-
-            SettingsLink {
-                Text("Settings...")
             }
 
             Divider()
@@ -147,78 +175,44 @@ struct MenuBarView: View {
     }
 
     private var statusColor: Color {
-        switch appState.controllerState {
-        case .idle:
-            return .green
-        case .listening:
-            return .blue
-        case .processing:
+        if !appState.isReady {
             return .orange
-        case .injecting:
-            return .purple
-        case .error:
+        } else if appState.isListening {
+            return .blue
+        } else if appState.errorMessage != nil {
             return .red
+        } else {
+            return .green
         }
     }
 }
 
 struct SettingsView: View {
     @EnvironmentObject var appState: AppState
-    @State private var modelName = "openai_whisper-base"
-    @State private var silenceThresholdMs = 500
-    @State private var soundEnabled = true
 
     var body: some View {
         Form {
-            Section("Model") {
-                TextField("Model Name", text: $modelName)
-                    .textFieldStyle(.roundedBorder)
-                Text("e.g., openai_whisper-base, openai_whisper-small, openai_whisper-large-v3-turbo")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
+            Section("Status") {
+                Text(appState.statusText)
             }
 
-            Section("Audio") {
-                Stepper("Silence threshold: \(silenceThresholdMs)ms", value: $silenceThresholdMs, in: 200...2000, step: 100)
-            }
-
-            Section("Feedback") {
-                Toggle("Sound feedback", isOn: $soundEnabled)
+            Section("Info") {
+                Text("CmdSpeak runs as a menu bar app.")
+                Text("Double-tap Right Option (⌥⌥) to start/stop dictation.")
+                Text("Text is injected at your cursor position.")
             }
 
             Section {
-                Button("Save & Reload") {
-                    saveAndReload()
+                Button("Reload Configuration") {
+                    Task {
+                        await appState.reload()
+                    }
                 }
                 .buttonStyle(.borderedProminent)
             }
         }
         .formStyle(.grouped)
-        .frame(width: 400, height: 300)
+        .frame(width: 400, height: 250)
         .padding()
-        .onAppear {
-            loadCurrentSettings()
-        }
-    }
-
-    private func loadCurrentSettings() {
-        if let config = try? ConfigManager.shared.load() {
-            modelName = config.model.name
-            silenceThresholdMs = config.audio.silenceThresholdMs
-            soundEnabled = config.feedback.soundEnabled
-        }
-    }
-
-    private func saveAndReload() {
-        var config = (try? ConfigManager.shared.load()) ?? Config.default
-        config.model.name = modelName
-        config.audio.silenceThresholdMs = silenceThresholdMs
-        config.feedback.soundEnabled = soundEnabled
-
-        try? ConfigManager.shared.save(config)
-
-        Task {
-            await appState.reload()
-        }
     }
 }
