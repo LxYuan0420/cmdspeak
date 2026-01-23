@@ -15,15 +15,22 @@ public actor OpenAIRealtimeEngine: TranscriptionEngine {
     private let language: String?
 
     private var accumulatedText: String = ""
+    private var finalTranscript: String?
     private var transcriptionContinuation: CheckedContinuation<TranscriptionResult, Error>?
 
     private let inputSampleRate: Double = 24000
     private var sessionCreated: Bool = false
+    private var isClosingIntentionally: Bool = false
 
     private var partialTranscriptionHandler: (@Sendable (String) -> Void)?
-    private var onDisconnect: (@Sendable () -> Void)?
+    private var onDisconnect: (@Sendable (Bool) -> Void)?
     private var onError: (@Sendable (String) -> Void)?
+    private var onFinalTranscript: (@Sendable (String) -> Void)?
     private var pingTask: Task<Void, Never>?
+    private var receiveTask: Task<Void, Never>?
+
+    private static let connectionTimeout: TimeInterval = 10.0
+    private static let sessionReadyTimeout: TimeInterval = 5.0
 
     public init(apiKey: String, model: String = "gpt-4o-transcribe", language: String? = nil) {
         self.apiKey = apiKey
@@ -34,6 +41,9 @@ public actor OpenAIRealtimeEngine: TranscriptionEngine {
     public func initialize() async throws {
         guard !apiKey.isEmpty else {
             throw TranscriptionError.modelLoadFailed("OPENAI_API_KEY not set")
+        }
+        guard !model.isEmpty else {
+            throw TranscriptionError.modelLoadFailed("Model name cannot be empty")
         }
         Self.logger.info("OpenAI Realtime Engine initialized (API mode)")
         isReady = true
@@ -52,6 +62,9 @@ public actor OpenAIRealtimeEngine: TranscriptionEngine {
         guard isReady else {
             throw TranscriptionError.notInitialized
         }
+
+        isClosingIntentionally = false
+        finalTranscript = nil
 
         let url = URL(string: "wss://api.openai.com/v1/realtime?intent=transcription")!
         var request = URLRequest(url: url)
@@ -72,10 +85,27 @@ public actor OpenAIRealtimeEngine: TranscriptionEngine {
         startReceiving()
         startPingTimer()
 
-        Self.logger.info("WebSocket connected")
+        try await waitForSessionReady()
+
+        Self.logger.info("WebSocket connected and session ready")
+    }
+
+    private func waitForSessionReady() async throws {
+        let deadline = Date().addingTimeInterval(Self.sessionReadyTimeout)
+
+        while !sessionCreated {
+            if Date() > deadline {
+                disconnect()
+                throw TranscriptionError.transcriptionFailed("Session creation timed out")
+            }
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
     }
 
     public func disconnect() {
+        isClosingIntentionally = true
+        receiveTask?.cancel()
+        receiveTask = nil
         pingTask?.cancel()
         pingTask = nil
         webSocket?.cancel(with: .normalClosure, reason: nil)
@@ -84,12 +114,20 @@ public actor OpenAIRealtimeEngine: TranscriptionEngine {
         sessionCreated = false
     }
 
-    public func setOnDisconnect(_ handler: (@Sendable () -> Void)?) {
+    public func setOnDisconnect(_ handler: (@Sendable (Bool) -> Void)?) {
         onDisconnect = handler
     }
 
     public func setOnError(_ handler: (@Sendable (String) -> Void)?) {
         onError = handler
+    }
+
+    public func setOnFinalTranscript(_ handler: (@Sendable (String) -> Void)?) {
+        onFinalTranscript = handler
+    }
+
+    public var isSessionReady: Bool {
+        sessionCreated
     }
 
     private func startPingTimer() {
@@ -115,6 +153,11 @@ public actor OpenAIRealtimeEngine: TranscriptionEngine {
     public func sendAudio(samples: [Float]) async throws {
         guard let ws = webSocket else {
             throw TranscriptionError.notInitialized
+        }
+
+        guard sessionCreated else {
+            Self.logger.debug("Dropping audio: session not ready")
+            return
         }
 
         let pcmData = convertToPCM16(samples: samples)
@@ -148,15 +191,30 @@ public actor OpenAIRealtimeEngine: TranscriptionEngine {
     }
 
     public func getTranscription() -> String {
-        return accumulatedText
+        return finalTranscript ?? accumulatedText
+    }
+
+    public func getFinalTranscript() -> String? {
+        return finalTranscript
     }
 
     public func clearTranscription() {
         accumulatedText = ""
+        finalTranscript = nil
     }
 
     public func setPartialTranscriptionHandler(_ handler: (@Sendable (String) -> Void)?) {
         partialTranscriptionHandler = handler
+    }
+
+    public func awaitFinalTranscript(timeout: TimeInterval = 1.0) async -> String {
+        let deadline = Date().addingTimeInterval(timeout)
+
+        while finalTranscript == nil && Date() < deadline {
+            try? await Task.sleep(nanoseconds: 50_000_000)
+        }
+
+        return finalTranscript ?? accumulatedText
     }
 
     private func configureSession() async throws {
@@ -193,7 +251,8 @@ public actor OpenAIRealtimeEngine: TranscriptionEngine {
     }
 
     private func startReceiving() {
-        Task { [weak self] in
+        receiveTask?.cancel()
+        receiveTask = Task { [weak self] in
             await self?.receiveLoop()
         }
     }
@@ -202,7 +261,7 @@ public actor OpenAIRealtimeEngine: TranscriptionEngine {
         guard let ws = webSocket else { return }
 
         do {
-            while true {
+            while !Task.isCancelled {
                 let message = try await ws.receive()
 
                 switch message {
@@ -217,10 +276,17 @@ public actor OpenAIRealtimeEngine: TranscriptionEngine {
                 }
             }
         } catch {
-            if (error as NSError).code != 57 {
-                Self.logger.error("WebSocket receive error: \(error.localizedDescription)")
+            let nsError = error as NSError
+            let isSocketClosed = nsError.code == 57 || nsError.code == 54
+            let wasIntentional = isClosingIntentionally
+
+            if !isSocketClosed && !wasIntentional {
+                Self.logger.error("WebSocket error: \(error.localizedDescription) (code: \(nsError.code))")
             }
-            onDisconnect?()
+
+            if !wasIntentional {
+                onDisconnect?(false)
+            }
         }
     }
 
@@ -228,13 +294,14 @@ public actor OpenAIRealtimeEngine: TranscriptionEngine {
         guard let data = text.data(using: .utf8),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let eventType = json["type"] as? String else {
+            Self.logger.warning("Received malformed message")
             return
         }
 
         switch eventType {
         case "transcription_session.created":
             sessionCreated = true
-            Self.logger.debug("Transcription session created")
+            Self.logger.info("Transcription session created")
 
         case "transcription_session.updated":
             Self.logger.debug("Transcription session updated")
@@ -242,7 +309,6 @@ public actor OpenAIRealtimeEngine: TranscriptionEngine {
         case "conversation.item.input_audio_transcription.delta":
             if let delta = json["delta"] as? String {
                 accumulatedText += delta
-                Self.logger.debug("Delta: \(delta)")
                 partialTranscriptionHandler?(delta)
             }
 
@@ -251,7 +317,10 @@ public actor OpenAIRealtimeEngine: TranscriptionEngine {
                 if accumulatedText.isEmpty {
                     accumulatedText = transcript
                 }
-                Self.logger.info("Completed: \(transcript)")
+                finalTranscript = accumulatedText
+                let totalChars = accumulatedText.count
+                Self.logger.info("Segment completed: \(transcript.count) chars, total: \(totalChars) chars")
+                onFinalTranscript?(accumulatedText)
             }
 
         case "input_audio_buffer.speech_started":
@@ -266,12 +335,13 @@ public actor OpenAIRealtimeEngine: TranscriptionEngine {
         case "error":
             if let error = json["error"] as? [String: Any],
                let message = error["message"] as? String {
-                Self.logger.error("API error: \(message)")
+                let code = error["code"] as? String ?? "unknown"
+                Self.logger.error("API error [\(code)]: \(message)")
                 onError?(message)
             }
 
         default:
-            Self.logger.debug("Event: \(eventType)")
+            break
         }
     }
 
@@ -286,4 +356,10 @@ public actor OpenAIRealtimeEngine: TranscriptionEngine {
         }
         return data
     }
+
+    #if DEBUG
+    public func testHandleMessage(_ text: String) async {
+        await handleMessage(text)
+    }
+    #endif
 }
