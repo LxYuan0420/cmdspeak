@@ -815,6 +815,9 @@ struct RunOpenAI: ParsableCommand {
                 case .listening:
                     print("\r[listening]  ", terminator: "")
                     fflush(stdout)
+                case .finalizing:
+                    print(" [finalizing...]", terminator: "")
+                    fflush(stdout)
                 case .error(let message):
                     print("[error] \(message)")
                     fflush(stdout)
