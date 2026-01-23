@@ -13,7 +13,7 @@ struct ConfigTests {
         #expect(config.hotkey.trigger == "double-tap-right-option")
         #expect(config.hotkey.intervalMs == 300)
         #expect(config.audio.sampleRate == 16000)
-        #expect(config.audio.silenceThresholdMs == 500)
+        #expect(config.audio.silenceThresholdMs == 10000)
         #expect(config.feedback.soundEnabled == true)
         #expect(config.feedback.menuBarIcon == true)
     }
