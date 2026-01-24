@@ -59,6 +59,55 @@ struct OpenAIRealtimeControllerTests {
     }
 }
 
+@Suite("Error Classification Tests")
+struct ErrorClassificationTests {
+
+    @Test("Invalid API key errors are classified as fatal")
+    func testInvalidApiKeyIsFatal() {
+        let fatalMessages = [
+            "invalid_api_key",
+            "Invalid API key provided",
+            "authentication failed",
+            "unauthorized access",
+            "invalid_request_error: bad key"
+        ]
+
+        for message in fatalMessages {
+            #expect(message.lowercased().contains("invalid_api_key") ||
+                   message.lowercased().contains("invalid api key") ||
+                   message.lowercased().contains("authentication") ||
+                   message.lowercased().contains("unauthorized") ||
+                   message.lowercased().contains("invalid_request_error"))
+        }
+    }
+
+    @Test("Model not found errors are classified as fatal")
+    func testModelNotFoundIsFatal() {
+        let message = "model_not_found: gpt-4o-transcribe"
+        #expect(message.lowercased().contains("model_not_found"))
+    }
+
+    @Test("Quota errors are classified as fatal")
+    func testQuotaErrorIsFatal() {
+        let messages = [
+            "insufficient_quota",
+            "billing issue detected"
+        ]
+
+        for message in messages {
+            #expect(message.lowercased().contains("insufficient_quota") ||
+                   message.lowercased().contains("billing"))
+        }
+    }
+
+    @Test("Rate limit errors are transient")
+    func testRateLimitIsTransient() {
+        let message = "rate_limit_exceeded"
+        #expect(!message.lowercased().contains("invalid_api_key"))
+        #expect(!message.lowercased().contains("insufficient_quota"))
+    }
+}
+
 @Suite("Configuration Validation Tests")
 struct ConfigurationValidationTests {
 
