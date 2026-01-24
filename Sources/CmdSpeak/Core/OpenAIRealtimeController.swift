@@ -32,6 +32,7 @@ public final class OpenAIRealtimeController {
     private var silenceTimer: Timer?
     private let silenceTimeout: TimeInterval
     private var pendingText: String = ""
+    private var isSpeaking: Bool = false
 
     private var currentSessionID: UUID?
     private var audioSendTask: Task<Void, Never>?
@@ -103,14 +104,40 @@ public final class OpenAIRealtimeController {
                     self?.handleEngineError(message)
                 }
             }
+
+            await engine.setOnSpeechStarted { [weak self] in
+                Task { @MainActor in
+                    self?.handleSpeechStarted()
+                }
+            }
+
+            await engine.setOnSpeechStopped { [weak self] in
+                Task { @MainActor in
+                    self?.handleSpeechStopped()
+                }
+            }
         }
+    }
+
+    private func handleSpeechStarted() {
+        guard case .listening = state else { return }
+        isSpeaking = true
+        silenceTimer?.invalidate()
+        silenceTimer = nil
+        Self.logger.debug("VAD: speech started")
+    }
+
+    private func handleSpeechStopped() {
+        guard case .listening = state else { return }
+        isSpeaking = false
+        Self.logger.debug("VAD: speech stopped, starting silence timer")
+        resetSilenceTimer()
     }
 
     private func handlePartialTranscription(_ delta: String) {
         guard case .listening = state else { return }
         pendingText += delta
         onPartialTranscription?(delta)
-        resetSilenceTimer()
     }
 
     private func handleUnexpectedDisconnect(wasIntentional: Bool) async {
@@ -286,6 +313,7 @@ public final class OpenAIRealtimeController {
         setState(.connecting)
         pendingText = ""
         droppedBufferCount = 0
+        isSpeaking = false
 
         do {
             try await engine.connect()
