@@ -148,6 +148,12 @@ public final class OpenAIRealtimeController {
         silenceTimer?.invalidate()
         silenceTimer = nil
 
+        guard shouldRetryOnError else {
+            Self.logger.info("Not retrying due to fatal error")
+            await finishAndInject()
+            return
+        }
+
         let savedSessionID = currentSessionID
         let savedText = pendingText
 
@@ -155,6 +161,11 @@ public final class OpenAIRealtimeController {
             guard currentSessionID == savedSessionID else {
                 Self.logger.info("Session changed, aborting reconnect")
                 return
+            }
+
+            guard shouldRetryOnError else {
+                Self.logger.info("Fatal error received, stopping retries")
+                break
             }
 
             let delay = Self.reconnectBaseDelay * pow(2.0, Double(attempt - 1))
@@ -181,11 +192,48 @@ public final class OpenAIRealtimeController {
         await finishAndInject()
     }
 
+    private var shouldRetryOnError: Bool = true
+
     private func handleEngineError(_ message: String) {
-        if message.contains("invalid_api_key") || message.contains("authentication") {
-            Self.logger.error("Authentication error - not retrying")
-            setState(.error("Invalid API key"))
+        let errorType = classifyError(message)
+
+        switch errorType {
+        case .fatal(let userMessage):
+            Self.logger.error("Fatal error: \(message)")
+            shouldRetryOnError = false
+            setState(.error(userMessage))
+        case .transient:
+            Self.logger.warning("Transient error: \(message)")
         }
+    }
+
+    private enum ErrorType {
+        case fatal(String)
+        case transient
+    }
+
+    private func classifyError(_ message: String) -> ErrorType {
+        let lowerMessage = message.lowercased()
+
+        if lowerMessage.contains("invalid_api_key") ||
+           lowerMessage.contains("invalid api key") ||
+           lowerMessage.contains("authentication") ||
+           lowerMessage.contains("unauthorized") ||
+           lowerMessage.contains("invalid_request_error") {
+            return .fatal("Invalid API key")
+        }
+
+        if lowerMessage.contains("model_not_found") ||
+           lowerMessage.contains("model not found") {
+            return .fatal("Model not available")
+        }
+
+        if lowerMessage.contains("insufficient_quota") ||
+           lowerMessage.contains("billing") {
+            return .fatal("API quota exceeded")
+        }
+
+        return .transient
     }
 
     private func resetSilenceTimer() {
@@ -299,11 +347,21 @@ public final class OpenAIRealtimeController {
             await startListening()
         case .listening:
             await finishAndInject()
-        case .connecting, .finalizing:
+        case .connecting:
+            await cancelConnecting()
+        case .finalizing:
             break
         case .error:
             setState(.idle)
         }
+    }
+
+    private func cancelConnecting() async {
+        Self.logger.info("Cancelling connection")
+        currentSessionID = nil
+        await engine.disconnect()
+        stopAudioSendPipeline()
+        setState(.idle)
     }
 
     private func startListening() async {
@@ -314,6 +372,7 @@ public final class OpenAIRealtimeController {
         pendingText = ""
         droppedBufferCount = 0
         isSpeaking = false
+        shouldRetryOnError = true
 
         do {
             try await engine.connect()
