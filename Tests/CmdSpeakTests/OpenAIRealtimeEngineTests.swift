@@ -567,6 +567,40 @@ struct MessageHandlingTests {
         let text = await engine.getTranscription()
         #expect(text == "")
     }
+
+    @Test("Speech started callback is invoked")
+    func testSpeechStartedCallback() async throws {
+        let engine = OpenAIRealtimeEngine(apiKey: "test-key")
+        try await engine.initialize()
+
+        let callbackInvoked = AtomicValue(false)
+        await engine.setOnSpeechStarted {
+            callbackInvoked.value = true
+        }
+
+        await engine.testHandleMessage("""
+        {"type": "input_audio_buffer.speech_started"}
+        """)
+
+        #expect(callbackInvoked.value == true)
+    }
+
+    @Test("Speech stopped callback is invoked")
+    func testSpeechStoppedCallback() async throws {
+        let engine = OpenAIRealtimeEngine(apiKey: "test-key")
+        try await engine.initialize()
+
+        let callbackInvoked = AtomicValue(false)
+        await engine.setOnSpeechStopped {
+            callbackInvoked.value = true
+        }
+
+        await engine.testHandleMessage("""
+        {"type": "input_audio_buffer.speech_stopped"}
+        """)
+
+        #expect(callbackInvoked.value == true)
+    }
 }
 
 // MARK: - Handler Configuration Tests
