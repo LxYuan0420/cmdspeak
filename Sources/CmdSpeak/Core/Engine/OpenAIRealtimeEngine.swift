@@ -25,6 +25,8 @@ public actor OpenAIRealtimeEngine: TranscriptionEngine {
     private var onDisconnect: (@Sendable (Bool) -> Void)?
     private var onError: (@Sendable (String) -> Void)?
     private var onFinalTranscript: (@Sendable (String) -> Void)?
+    private var onSpeechStarted: (@Sendable () -> Void)?
+    private var onSpeechStopped: (@Sendable () -> Void)?
     private var pingTask: Task<Void, Never>?
     private var receiveTask: Task<Void, Never>?
 
@@ -123,6 +125,14 @@ public actor OpenAIRealtimeEngine: TranscriptionEngine {
 
     public func setOnFinalTranscript(_ handler: (@Sendable (String) -> Void)?) {
         onFinalTranscript = handler
+    }
+
+    public func setOnSpeechStarted(_ handler: (@Sendable () -> Void)?) {
+        onSpeechStarted = handler
+    }
+
+    public func setOnSpeechStopped(_ handler: (@Sendable () -> Void)?) {
+        onSpeechStopped = handler
     }
 
     public var isSessionReady: Bool {
@@ -324,9 +334,11 @@ public actor OpenAIRealtimeEngine: TranscriptionEngine {
 
         case "input_audio_buffer.speech_started":
             Self.logger.debug("Speech started")
+            onSpeechStarted?()
 
         case "input_audio_buffer.speech_stopped":
             Self.logger.debug("Speech stopped")
+            onSpeechStopped?()
 
         case "input_audio_buffer.committed":
             Self.logger.debug("Audio committed by server")
