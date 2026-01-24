@@ -16,7 +16,6 @@ public actor OpenAIRealtimeEngine: TranscriptionEngine {
 
     private var accumulatedText: String = ""
     private var finalTranscript: String?
-    private var transcriptionContinuation: CheckedContinuation<TranscriptionResult, Error>?
 
     private let inputSampleRate: Double = 24000
     private var sessionCreated: Bool = false
@@ -98,7 +97,7 @@ public actor OpenAIRealtimeEngine: TranscriptionEngine {
                 disconnect()
                 throw TranscriptionError.transcriptionFailed("Session creation timed out")
             }
-            try await Task.sleep(nanoseconds: 50_000_000)
+            try await Task.sleep(nanoseconds: 20_000_000)
         }
     }
 
@@ -207,7 +206,7 @@ public actor OpenAIRealtimeEngine: TranscriptionEngine {
         partialTranscriptionHandler = handler
     }
 
-    public func awaitFinalTranscript(timeout: TimeInterval = 1.0) async -> String {
+    public func awaitFinalTranscript(timeout: TimeInterval = 3.0) async -> String {
         let deadline = Date().addingTimeInterval(timeout)
 
         while finalTranscript == nil && Date() < deadline {

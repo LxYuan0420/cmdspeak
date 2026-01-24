@@ -27,6 +27,7 @@ public final class OpenAIRealtimeController {
     private let engine: OpenAIRealtimeEngine
     private let injector: TextInjector
     private let hotkeyManager: HotkeyManager
+    private let resampler: AudioResampler
 
     private var silenceTimer: Timer?
     private let silenceTimeout: TimeInterval
@@ -41,7 +42,6 @@ public final class OpenAIRealtimeController {
     private static let finalTranscriptTimeout: TimeInterval = 3.0
     private static let maxAudioBufferQueue = 50
 
-    private let inputSampleRate: Double = 24000
     private var droppedBufferCount = 0
 
     public init(config: Config) {
@@ -59,6 +59,7 @@ public final class OpenAIRealtimeController {
         self.hotkeyManager = HotkeyManager(
             doubleTapInterval: TimeInterval(config.hotkey.intervalMs) / 1000.0
         )
+        self.resampler = AudioResampler()
 
         setupCallbacks()
     }
@@ -314,23 +315,8 @@ public final class OpenAIRealtimeController {
 
     private func handleAudioBuffer(_ buffer: AVAudioPCMBuffer) {
         guard case .listening = state, currentSessionID != nil else { return }
-        guard let channelData = buffer.floatChannelData?[0] else { return }
 
-        let frameLength = Int(buffer.frameLength)
-        let sourceSampleRate = buffer.format.sampleRate
-
-        let targetLength = Int(Double(frameLength) * inputSampleRate / sourceSampleRate)
-        guard targetLength > 0 else { return }
-
-        var resampled = [Float](repeating: 0, count: targetLength)
-        let ratio = sourceSampleRate / inputSampleRate
-
-        for i in 0..<targetLength {
-            let srcIndex = Int(Double(i) * ratio)
-            if srcIndex < frameLength {
-                resampled[i] = channelData[srcIndex]
-            }
-        }
+        guard let resampled = resampler.resample(buffer) else { return }
 
         if let continuation = audioBufferContinuation {
             continuation.yield(resampled)
