@@ -21,7 +21,7 @@ struct ConfigManagerTests {
         let config = Config.default
 
         #expect(config.model.type == "local")
-        #expect(config.model.name == "openai_whisper-base")
+        #expect(config.model.name == ModelConfig.defaultLocalModel)
         #expect(config.model.translateToEnglish == false)
         #expect(config.model.language == nil)
 

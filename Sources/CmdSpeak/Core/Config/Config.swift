@@ -24,6 +24,9 @@ public struct Config: Codable, Sendable {
 }
 
 public struct ModelConfig: Codable, Sendable {
+    /// Default local model: large-v3-turbo for best quality/speed balance
+    public static let defaultLocalModel = "openai_whisper-large-v3-turbo"
+
     public var type: String
     public var name: String
     public var provider: String?
@@ -33,7 +36,7 @@ public struct ModelConfig: Codable, Sendable {
 
     public init(
         type: String = "local",
-        name: String = "openai_whisper-base",
+        name: String = ModelConfig.defaultLocalModel,
         provider: String? = nil,
         apiKey: String? = nil,
         language: String? = nil,

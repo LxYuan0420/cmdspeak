@@ -9,7 +9,7 @@ struct ConfigTests {
         let config = Config.default
 
         #expect(config.model.type == "local")
-        #expect(config.model.name == "openai_whisper-base")
+        #expect(config.model.name == ModelConfig.defaultLocalModel)
         #expect(config.hotkey.trigger == "double-tap-right-option")
         #expect(config.hotkey.intervalMs == 300)
         #expect(config.audio.sampleRate == 16000)
