@@ -45,6 +45,7 @@ struct OpenAIRealtimeControllerTests {
             .idle,
             .connecting,
             .listening,
+            .reconnecting(attempt: 1, maxAttempts: 3),
             .finalizing,
             .error("test")
         ]
@@ -56,6 +57,29 @@ struct OpenAIRealtimeControllerTests {
                 }
             }
         }
+    }
+
+    @Test("Reconnecting state equality with same parameters")
+    func testReconnectingStateEquality() {
+        let reconnecting1 = OpenAIRealtimeController.State.reconnecting(attempt: 1, maxAttempts: 3)
+        let reconnecting2 = OpenAIRealtimeController.State.reconnecting(attempt: 1, maxAttempts: 3)
+        #expect(reconnecting1 == reconnecting2)
+    }
+
+    @Test("Reconnecting state inequality with different parameters")
+    func testReconnectingStateInequality() {
+        let reconnecting1 = OpenAIRealtimeController.State.reconnecting(attempt: 1, maxAttempts: 3)
+        let reconnecting2 = OpenAIRealtimeController.State.reconnecting(attempt: 2, maxAttempts: 3)
+        let reconnecting3 = OpenAIRealtimeController.State.reconnecting(attempt: 1, maxAttempts: 5)
+        #expect(reconnecting1 != reconnecting2)
+        #expect(reconnecting1 != reconnecting3)
+    }
+
+    @Test("Reconnecting state is distinct from connecting")
+    func testReconnectingDistinctFromConnecting() {
+        let connecting = OpenAIRealtimeController.State.connecting
+        let reconnecting = OpenAIRealtimeController.State.reconnecting(attempt: 1, maxAttempts: 3)
+        #expect(connecting != reconnecting)
     }
 }
 

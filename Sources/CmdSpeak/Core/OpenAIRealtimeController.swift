@@ -13,6 +13,7 @@ public final class OpenAIRealtimeController {
         case idle
         case connecting
         case listening
+        case reconnecting(attempt: Int, maxAttempts: Int)
         case finalizing
         case error(String)
     }
@@ -168,6 +169,8 @@ public final class OpenAIRealtimeController {
                 break
             }
 
+            setState(.reconnecting(attempt: attempt, maxAttempts: Self.maxReconnectAttempts))
+
             let delay = Self.reconnectBaseDelay * pow(2.0, Double(attempt - 1))
             let jitter = Double.random(in: 0...0.3)
             Self.logger.info("Reconnect attempt \(attempt)/\(Self.maxReconnectAttempts) in \(delay + jitter)s")
@@ -180,6 +183,7 @@ public final class OpenAIRealtimeController {
                 try await engine.connect()
                 try await audioCapture.startRecording()
                 pendingText = savedText
+                setState(.listening)
                 resetSilenceTimer()
                 Self.logger.info("Reconnected successfully")
                 return
@@ -347,7 +351,7 @@ public final class OpenAIRealtimeController {
             await startListening()
         case .listening:
             await finishAndInject()
-        case .connecting:
+        case .connecting, .reconnecting:
             await cancelConnecting()
         case .finalizing:
             break

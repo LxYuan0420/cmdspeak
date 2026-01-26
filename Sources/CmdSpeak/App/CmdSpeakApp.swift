@@ -26,6 +26,7 @@ struct CmdSpeakApp: App {
 final class AppState: ObservableObject {
     @Published var isListening = false
     @Published var isReady = false
+    @Published var isReconnecting = false
     @Published var statusText = "Initializing..."
     @Published var errorMessage: String?
     @Published var lastTranscription: String = ""
@@ -35,6 +36,8 @@ final class AppState: ObservableObject {
     var menuBarIcon: String {
         if !isReady {
             return "ellipsis.circle"
+        } else if isReconnecting {
+            return "arrow.triangle.2.circlepath.circle"
         } else if isListening {
             return "mic.circle.fill"
         } else {
@@ -71,18 +74,27 @@ final class AppState: ObservableObject {
                     switch state {
                     case .idle:
                         self?.isListening = false
+                        self?.isReconnecting = false
                         self?.statusText = "Ready (⌥⌥ to start)"
                     case .connecting:
                         self?.isListening = false
+                        self?.isReconnecting = false
                         self?.statusText = "Connecting..."
                     case .listening:
                         self?.isListening = true
+                        self?.isReconnecting = false
                         self?.statusText = "Listening..."
+                    case .reconnecting(let attempt, let maxAttempts):
+                        self?.isListening = false
+                        self?.isReconnecting = true
+                        self?.statusText = "Reconnecting (\(attempt)/\(maxAttempts))..."
                     case .finalizing:
                         self?.isListening = false
+                        self?.isReconnecting = false
                         self?.statusText = "Finalizing..."
                     case .error(let msg):
                         self?.isListening = false
+                        self?.isReconnecting = false
                         self?.statusText = "Error"
                         self?.errorMessage = msg
                     }
@@ -177,6 +189,8 @@ struct MenuBarView: View {
     private var statusColor: Color {
         if !appState.isReady {
             return .orange
+        } else if appState.isReconnecting {
+            return .yellow
         } else if appState.isListening {
             return .blue
         } else if appState.errorMessage != nil {
