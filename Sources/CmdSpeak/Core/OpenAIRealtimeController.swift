@@ -22,6 +22,7 @@ public final class OpenAIRealtimeController {
     public var onStateChange: ((State) -> Void)?
     public var onPartialTranscription: ((String) -> Void)?
     public var onFinalTranscription: ((String) -> Void)?
+    public var onSessionMetrics: ((SessionMetrics) -> Void)?
 
     private let config: Config
     private let audioCapture: AudioCaptureManager
@@ -46,6 +47,7 @@ public final class OpenAIRealtimeController {
 
     private var droppedBufferCount = 0
     private var forceInjectRequested = false
+    private var metricsCollector: SessionMetricsCollector?
 
     public init(config: Config) {
         self.config = config
@@ -139,6 +141,7 @@ public final class OpenAIRealtimeController {
     private func handlePartialTranscription(_ delta: String) {
         guard case .listening = state else { return }
         pendingText += delta
+        metricsCollector?.recordTranscription(characters: delta.count)
         onPartialTranscription?(delta)
     }
 
@@ -152,7 +155,8 @@ public final class OpenAIRealtimeController {
 
         guard shouldRetryOnError else {
             Self.logger.info("Not retrying due to fatal error")
-            await finishAndInject()
+            metricsCollector?.recordDisconnect(reason: .connectionLost)
+            await finishAndInject(reason: .connectionLost)
             return
         }
 
@@ -170,6 +174,7 @@ public final class OpenAIRealtimeController {
                 break
             }
 
+            metricsCollector?.recordReconnectAttempt()
             setState(.reconnecting(attempt: attempt, maxAttempts: Self.maxReconnectAttempts))
 
             let delay = Self.reconnectBaseDelay * pow(2.0, Double(attempt - 1))
@@ -181,7 +186,10 @@ public final class OpenAIRealtimeController {
             guard currentSessionID == savedSessionID else { return }
 
             do {
+                metricsCollector?.recordConnectionStart()
                 try await engine.connect()
+                metricsCollector?.recordConnectionEstablished()
+                metricsCollector?.recordReconnectSuccess()
                 try await audioCapture.startRecording()
                 pendingText = savedText
                 setState(.listening)
@@ -194,7 +202,8 @@ public final class OpenAIRealtimeController {
         }
 
         Self.logger.error("All reconnect attempts failed")
-        await finishAndInject()
+        metricsCollector?.recordDisconnect(reason: .reconnectFailed)
+        await finishAndInject(reason: .reconnectFailed)
     }
 
     private var shouldRetryOnError: Bool = true
@@ -249,12 +258,13 @@ public final class OpenAIRealtimeController {
         ) { [weak self] _ in
             Task { @MainActor [weak self] in
                 guard let self = self, case .listening = self.state else { return }
-                await self.finishAndInject()
+                self.metricsCollector?.recordDisconnect(reason: .silenceTimeout)
+                await self.finishAndInject(reason: .silenceTimeout)
             }
         }
     }
 
-    private func finishAndInject() async {
+    private func finishAndInject(reason: DisconnectReason = .userInitiated) async {
         let sessionID = currentSessionID
         guard case .listening = state else { return }
 
@@ -276,6 +286,7 @@ public final class OpenAIRealtimeController {
 
         guard currentSessionID == sessionID else {
             Self.logger.info("Session changed during finalization, discarding")
+            finalizeMetrics(reason: .cancelled)
             return
         }
 
@@ -283,6 +294,8 @@ public final class OpenAIRealtimeController {
         pendingText = ""
         currentSessionID = nil
         forceInjectRequested = false
+
+        finalizeMetrics(reason: reason)
 
         if !text.isEmpty {
             onFinalTranscription?(text)
@@ -295,6 +308,18 @@ public final class OpenAIRealtimeController {
             }
         }
         setState(.idle)
+    }
+
+    private func finalizeMetrics(reason: DisconnectReason) {
+        guard let collector = metricsCollector else { return }
+        collector.recordDisconnect(reason: reason)
+        let metrics = collector.finalize()
+        metricsCollector = nil
+
+        Task {
+            await TelemetryAggregator.shared.record(metrics)
+        }
+        onSessionMetrics?(metrics)
     }
 
     private func awaitFinalTranscriptWithForceCheck(timeout: TimeInterval) async -> String {
@@ -372,7 +397,8 @@ public final class OpenAIRealtimeController {
         case .idle:
             await startListening()
         case .listening:
-            await finishAndInject()
+            metricsCollector?.recordDisconnect(reason: .userInitiated)
+            await finishAndInject(reason: .userInitiated)
         case .connecting, .reconnecting:
             await cancelConnecting()
         case .finalizing:
@@ -392,12 +418,16 @@ public final class OpenAIRealtimeController {
         currentSessionID = nil
         await engine.disconnect()
         stopAudioSendPipeline()
+        finalizeMetrics(reason: .cancelled)
         setState(.idle)
     }
 
     private func startListening() async {
         let sessionID = UUID()
         currentSessionID = sessionID
+
+        let collector = SessionMetricsCollector(sessionID: sessionID)
+        metricsCollector = collector
 
         setState(.connecting)
         pendingText = ""
@@ -406,11 +436,14 @@ public final class OpenAIRealtimeController {
         shouldRetryOnError = true
 
         do {
+            collector.recordConnectionStart()
             try await engine.connect()
+            collector.recordConnectionEstablished()
 
             guard currentSessionID == sessionID else {
                 Self.logger.info("Session cancelled before recording started")
                 await engine.disconnect()
+                finalizeMetrics(reason: .cancelled)
                 return
             }
 
@@ -425,6 +458,13 @@ public final class OpenAIRealtimeController {
             if currentSessionID == sessionID {
                 Self.logger.error("Failed to start listening: \(error.localizedDescription)")
                 stopAudioSendPipeline()
+                let reason: DisconnectReason
+                if case TranscriptionError.connectionTimeout = error {
+                    reason = .connectionTimeout
+                } else {
+                    reason = .fatalError(error.localizedDescription)
+                }
+                finalizeMetrics(reason: reason)
                 setState(.error(error.localizedDescription))
                 currentSessionID = nil
             }
@@ -437,7 +477,11 @@ public final class OpenAIRealtimeController {
         guard let resampled = resampler.resample(buffer) else { return }
 
         if let continuation = audioBufferContinuation {
+            metricsCollector?.recordAudioBufferSent()
             continuation.yield(resampled)
+        } else {
+            metricsCollector?.recordAudioBufferDropped()
+            droppedBufferCount += 1
         }
     }
 
