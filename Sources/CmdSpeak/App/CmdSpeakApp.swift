@@ -27,8 +27,10 @@ final class AppState: ObservableObject {
     @Published var isListening = false
     @Published var isReady = false
     @Published var isReconnecting = false
+    @Published var isFinalizing = false
     @Published var statusText = "Initializing..."
     @Published var errorMessage: String?
+    @Published var errorHint: String?
     @Published var lastTranscription: String = ""
 
     private var openAIController: OpenAIRealtimeController?
@@ -40,9 +42,45 @@ final class AppState: ObservableObject {
             return "arrow.triangle.2.circlepath.circle"
         } else if isListening {
             return "mic.circle.fill"
+        } else if isFinalizing {
+            return "ellipsis.circle.fill"
         } else {
             return "mic.circle"
         }
+    }
+
+    func dismissError() {
+        errorMessage = nil
+        errorHint = nil
+    }
+
+    private func setError(_ message: String) {
+        errorMessage = message
+        errorHint = Self.recoveryHint(for: message)
+    }
+
+    private static func recoveryHint(for error: String) -> String? {
+        let lower = error.lowercased()
+
+        if lower.contains("api key") || lower.contains("unauthorized") || lower.contains("authentication") {
+            return "Check OPENAI_API_KEY environment variable"
+        }
+        if lower.contains("quota") || lower.contains("billing") {
+            return "Check your OpenAI account billing status"
+        }
+        if lower.contains("model") && lower.contains("not") {
+            return "Update model name in ~/.config/cmdspeak/config.toml"
+        }
+        if lower.contains("timeout") || lower.contains("timed out") {
+            return "Check your internet connection and try again"
+        }
+        if lower.contains("accessibility") {
+            return "Grant Accessibility permission in System Settings → Privacy"
+        }
+        if lower.contains("microphone") {
+            return "Grant Microphone permission in System Settings → Privacy"
+        }
+        return "Press ⌥⌥ to dismiss and try again"
     }
 
     init() {
@@ -75,28 +113,37 @@ final class AppState: ObservableObject {
                     case .idle:
                         self?.isListening = false
                         self?.isReconnecting = false
+                        self?.isFinalizing = false
                         self?.statusText = "Ready (⌥⌥ to start)"
+                        self?.lastTranscription = ""
                     case .connecting:
                         self?.isListening = false
                         self?.isReconnecting = false
+                        self?.isFinalizing = false
                         self?.statusText = "Connecting..."
+                        self?.errorMessage = nil
+                        self?.errorHint = nil
                     case .listening:
                         self?.isListening = true
                         self?.isReconnecting = false
+                        self?.isFinalizing = false
                         self?.statusText = "Listening..."
                     case .reconnecting(let attempt, let maxAttempts):
                         self?.isListening = false
                         self?.isReconnecting = true
+                        self?.isFinalizing = false
                         self?.statusText = "Reconnecting (\(attempt)/\(maxAttempts))..."
                     case .finalizing:
                         self?.isListening = false
                         self?.isReconnecting = false
-                        self?.statusText = "Finalizing..."
+                        self?.isFinalizing = true
+                        self?.statusText = "Injecting..."
                     case .error(let msg):
                         self?.isListening = false
                         self?.isReconnecting = false
+                        self?.isFinalizing = false
                         self?.statusText = "Error"
-                        self?.errorMessage = msg
+                        self?.setError(msg)
                     }
                 }
             }
@@ -148,17 +195,26 @@ struct MenuBarView: View {
                     .font(.headline)
             }
 
-            if !appState.lastTranscription.isEmpty {
-                Text(appState.lastTranscription)
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                    .lineLimit(2)
+            if appState.isListening || appState.isFinalizing {
+                transcriptionPreview
             }
 
             if let error = appState.errorMessage {
-                Text(error)
-                    .font(.caption)
-                    .foregroundColor(.red)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(error)
+                        .font(.caption)
+                        .foregroundColor(.red)
+                    if let hint = appState.errorHint {
+                        Text("💡 \(hint)")
+                            .font(.caption2)
+                            .foregroundColor(.orange)
+                    }
+                }
+
+                Button("Dismiss Error") {
+                    appState.dismissError()
+                }
+                .font(.caption)
             }
 
             Divider()
@@ -186,11 +242,32 @@ struct MenuBarView: View {
         .padding(.vertical, 4)
     }
 
+    @ViewBuilder
+    private var transcriptionPreview: some View {
+        if appState.lastTranscription.isEmpty {
+            Text(appState.isListening ? "Listening..." : "Processing...")
+                .font(.caption)
+                .foregroundColor(.secondary)
+                .italic()
+        } else {
+            HStack(alignment: .top, spacing: 4) {
+                Text("📝")
+                    .font(.caption)
+                Text(appState.lastTranscription)
+                    .font(.caption)
+                    .foregroundColor(.primary)
+                    .lineLimit(3)
+            }
+        }
+    }
+
     private var statusColor: Color {
         if !appState.isReady {
             return .orange
         } else if appState.isReconnecting {
             return .yellow
+        } else if appState.isFinalizing {
+            return .purple
         } else if appState.isListening {
             return .blue
         } else if appState.errorMessage != nil {

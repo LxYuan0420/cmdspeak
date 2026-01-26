@@ -45,6 +45,7 @@ public final class OpenAIRealtimeController {
     private static let maxAudioBufferQueue = 50
 
     private var droppedBufferCount = 0
+    private var forceInjectRequested = false
 
     public init(config: Config) {
         self.config = config
@@ -262,6 +263,7 @@ public final class OpenAIRealtimeController {
         silenceTimer = nil
         audioCapture.stopRecording()
         stopAudioSendPipeline()
+        forceInjectRequested = false
 
         do {
             try await engine.commitAudio()
@@ -269,7 +271,7 @@ public final class OpenAIRealtimeController {
             Self.logger.warning("Failed to commit audio: \(error.localizedDescription)")
         }
 
-        let finalText = await engine.awaitFinalTranscript(timeout: Self.finalTranscriptTimeout)
+        let finalText = await awaitFinalTranscriptWithForceCheck(timeout: Self.finalTranscriptTimeout)
         await engine.disconnect()
 
         guard currentSessionID == sessionID else {
@@ -280,6 +282,7 @@ public final class OpenAIRealtimeController {
         let text = finalText.trimmingCharacters(in: .whitespacesAndNewlines)
         pendingText = ""
         currentSessionID = nil
+        forceInjectRequested = false
 
         if !text.isEmpty {
             onFinalTranscription?(text)
@@ -292,6 +295,25 @@ public final class OpenAIRealtimeController {
             }
         }
         setState(.idle)
+    }
+
+    private func awaitFinalTranscriptWithForceCheck(timeout: TimeInterval) async -> String {
+        let deadline = Date().addingTimeInterval(timeout)
+
+        while Date() < deadline {
+            if forceInjectRequested {
+                Self.logger.info("Force inject: using accumulated text")
+                return await engine.getTranscription()
+            }
+
+            if let final = await engine.getFinalTranscript() {
+                return final
+            }
+
+            try? await Task.sleep(nanoseconds: 50_000_000)
+        }
+
+        return await engine.getTranscription()
     }
 
     public func start() async throws {
@@ -354,10 +376,15 @@ public final class OpenAIRealtimeController {
         case .connecting, .reconnecting:
             await cancelConnecting()
         case .finalizing:
-            break
+            forceInject()
         case .error:
             setState(.idle)
         }
+    }
+
+    private func forceInject() {
+        Self.logger.info("Force inject requested")
+        forceInjectRequested = true
     }
 
     private func cancelConnecting() async {
