@@ -28,6 +28,7 @@ public enum TranscriptionError: Error, LocalizedError {
     case modelLoadFailed(String)
     case transcriptionFailed(String)
     case emptyAudio
+    case connectionTimeout
 
     public var errorDescription: String? {
         switch self {
@@ -39,6 +40,8 @@ public enum TranscriptionError: Error, LocalizedError {
             return "Transcription failed: \(message)"
         case .emptyAudio:
             return "No audio data provided"
+        case .connectionTimeout:
+            return "Connection timed out"
         }
     }
 }

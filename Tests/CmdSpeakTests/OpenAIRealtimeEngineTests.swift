@@ -605,6 +605,56 @@ struct MessageHandlingTests {
 
 // MARK: - Handler Configuration Tests
 
+// MARK: - Connection Timeout Tests
+
+@Suite("Connection Timeout Tests")
+struct ConnectionTimeoutTests {
+
+    @Test("ConnectionTimeout error has correct description")
+    func testConnectionTimeoutErrorDescription() {
+        let error = TranscriptionError.connectionTimeout
+        #expect(error.errorDescription == "Connection timed out")
+    }
+
+    @Test("ConnectionTimeout is distinct from other errors")
+    func testConnectionTimeoutDistinct() {
+        let timeoutError = TranscriptionError.connectionTimeout
+        let notInitError = TranscriptionError.notInitialized
+
+        if case .connectionTimeout = timeoutError {
+            #expect(true)
+        } else {
+            Issue.record("Expected connectionTimeout case")
+        }
+
+        if case .connectionTimeout = notInitError {
+            Issue.record("notInitialized should not match connectionTimeout")
+        } else {
+            #expect(true)
+        }
+    }
+
+    @Test("ConnectionTimeout can be caught and handled")
+    func testConnectionTimeoutCatching() async {
+        func simulateTimeout() throws {
+            throw TranscriptionError.connectionTimeout
+        }
+
+        do {
+            try simulateTimeout()
+            Issue.record("Expected connectionTimeout error")
+        } catch let error as TranscriptionError {
+            if case .connectionTimeout = error {
+                #expect(true)
+            } else {
+                Issue.record("Expected connectionTimeout, got \(error)")
+            }
+        } catch {
+            Issue.record("Unexpected error type: \(error)")
+        }
+    }
+}
+
 @Suite("Handler Configuration Tests")
 struct HandlerConfigurationTests {
 

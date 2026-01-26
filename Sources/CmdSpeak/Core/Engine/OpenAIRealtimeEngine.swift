@@ -82,13 +82,33 @@ public actor OpenAIRealtimeEngine: TranscriptionEngine {
 
         ws.resume()
 
-        try await configureSession()
-        startReceiving()
-        startPingTimer()
-
-        try await waitForSessionReady()
+        try await withConnectionTimeout {
+            try await self.configureSession()
+            self.startReceiving()
+            self.startPingTimer()
+            try await self.waitForSessionReady()
+        }
 
         Self.logger.info("WebSocket connected and session ready")
+    }
+
+    private func withConnectionTimeout<T>(_ operation: @escaping () async throws -> T) async throws -> T {
+        try await withThrowingTaskGroup(of: T.self) { group in
+            group.addTask {
+                try await operation()
+            }
+
+            group.addTask {
+                try await Task.sleep(nanoseconds: UInt64(Self.connectionTimeout * 1_000_000_000))
+                throw TranscriptionError.connectionTimeout
+            }
+
+            guard let result = try await group.next() else {
+                throw TranscriptionError.connectionTimeout
+            }
+            group.cancelAll()
+            return result
+        }
     }
 
     private func waitForSessionReady() async throws {
