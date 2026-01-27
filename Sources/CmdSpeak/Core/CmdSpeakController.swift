@@ -19,6 +19,7 @@ public final class CmdSpeakController {
 
     public private(set) var state: State = .idle
     public var onStateChange: ((State) -> Void)?
+    public var onModelLoadProgress: ((ModelLoadProgress) -> Void)?
 
     private let config: Config
     private let audioCapture: AudioCaptureManager
@@ -52,17 +53,8 @@ public final class CmdSpeakController {
     private func setupCallbacks() {
         Self.logger.debug("Setting up callbacks")
         hotkeyManager.onHotkeyTriggered = { [weak self] in
-            guard let self = self else {
-                print("[DEBUG] self is nil in hotkey callback")
-                return
-            }
-            print("[DEBUG] Hotkey triggered, dispatching to main queue")
-            DispatchQueue.main.async {
-                print("[DEBUG] Main queue block executing")
-                Task { @MainActor in
-                    print("[DEBUG] Task starting handleHotkeyTriggered")
-                    await self.handleHotkeyTriggered()
-                }
+            Task { @MainActor in
+                await self?.handleHotkeyTriggered()
             }
         }
         Self.logger.debug("Callbacks setup complete")
@@ -80,7 +72,12 @@ public final class CmdSpeakController {
 
     public func start() async throws {
         Self.logger.info("Initializing engine")
-        try await engine.initialize()
+        let progressCallback = onModelLoadProgress
+        try await engine.initialize { progress in
+            Task { @MainActor in
+                progressCallback?(progress)
+            }
+        }
         Self.logger.info("Engine initialized")
 
         var attempts = 0

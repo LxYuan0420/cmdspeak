@@ -10,7 +10,7 @@ struct CmdSpeakCLI: AsyncParsableCommand {
         commandName: "cmdspeak",
         abstract: "Drop-in replacement for macOS Dictation",
         version: CmdSpeakCore.version,
-        subcommands: [Status.self, TestMic.self, TestHotkey.self, TestTranscribe.self, TestIntegration.self, TestOpenAI.self, Reload.self, Run.self, RunOpenAI.self],
+        subcommands: [Status.self, TestMic.self, TestHotkey.self, TestTranscribe.self, TestIntegration.self, TestOpenAI.self, Reload.self, Run.self, RunLocal.self, RunOpenAI.self],
         defaultSubcommand: Run.self
     )
 }
@@ -773,25 +773,161 @@ final class RealtimeAudioSender: NSObject, AVCaptureAudioDataOutputSampleBufferD
     }
 }
 
-struct RunOpenAI: ParsableCommand {
+struct RunLocal: ParsableCommand {
     static let configuration = CommandConfiguration(
-        commandName: "run-openai",
-        abstract: "Run CmdSpeak with OpenAI Realtime API"
+        commandName: "run-local",
+        abstract: "Run CmdSpeak with local WhisperKit model (shortcut for type=local)"
     )
 
     func run() throws {
-        guard let apiKey = ProcessInfo.processInfo.environment["OPENAI_API_KEY"], !apiKey.isEmpty else {
-            print("Error: OPENAI_API_KEY environment variable not set")
+        var config = try ConfigManager.shared.load()
+        config.model.type = "local"
+        try Run.runLocalMode(config: config)
+    }
+}
+
+struct RunOpenAI: ParsableCommand {
+    static let configuration = CommandConfiguration(
+        commandName: "run-openai",
+        abstract: "Run CmdSpeak with OpenAI Realtime API (shortcut for type=openai-realtime)"
+    )
+
+    func run() throws {
+        var config = try ConfigManager.shared.load()
+        config.model.type = "openai-realtime"
+        try Run.runOpenAIMode(config: config)
+    }
+}
+
+struct Run: ParsableCommand {
+    static let configuration = CommandConfiguration(
+        abstract: "Run CmdSpeak (default)"
+    )
+
+    func run() throws {
+        let config = try ConfigManager.shared.load()
+        try ConfigManager.shared.createDefaultIfNeeded()
+
+        if config.model.type == "openai-realtime" {
+            try Self.runOpenAIMode(config: config)
+        } else {
+            try Self.runLocalMode(config: config)
+        }
+    }
+
+    fileprivate static func runLocalMode(config: Config) throws {
+        print("CmdSpeak v\(CmdSpeakCore.version)")
+
+        let semaphore = DispatchSemaphore(value: 0)
+        var startError: Error?
+        var lastProgressMessage = ""
+
+        class ControllerHolder {
+            var controller: CmdSpeakController?
+        }
+        let holder = ControllerHolder()
+
+        Task { @MainActor in
+            let ctrl = CmdSpeakController(config: config)
+            holder.controller = ctrl
+
+            ctrl.onModelLoadProgress = { progress in
+                let progressBar = Self.makeProgressBar(progress.progress)
+                let clearLine = "\r\u{001B}[K"
+                let message = "\(clearLine)\(progressBar) \(progress.message)"
+                if message != lastProgressMessage {
+                    print(message, terminator: "")
+                    fflush(stdout)
+                    lastProgressMessage = message
+                }
+                if progress.stage == .ready {
+                    print("")
+                }
+            }
+
+            ctrl.onStateChange = { state in
+                switch state {
+                case .idle:
+                    print("\n🎤 Ready - Double-tap Right Option to dictate")
+                    fflush(stdout)
+                case .listening:
+                    print("\n🔴 LISTENING - Speak now! (double-tap again to stop)")
+                    fflush(stdout)
+                case .processing:
+                    print("\n⏳ Processing...")
+                    fflush(stdout)
+                case .injecting:
+                    break
+                case .error(let message):
+                    print("❌ Error: \(message)")
+                    fflush(stdout)
+                }
+            }
+
+            do {
+                try await ctrl.start()
+            } catch {
+                startError = error
+            }
+            semaphore.signal()
+        }
+
+        while semaphore.wait(timeout: .now()) == .timedOut {
+            RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+        }
+
+        if let error = startError {
+            print("Error: \(error.localizedDescription)")
             return
         }
 
-        var config = try ConfigManager.shared.load()
-        config.model.type = "openai-realtime"
-        config.model.apiKey = apiKey
-        if config.model.name.isEmpty || config.model.name.hasPrefix("openai_whisper") {
-            config.model.name = "gpt-4o-transcribe"
+        let langInfo: String
+        if config.model.translateToEnglish {
+            langInfo = " (translate → English)"
+        } else if let lang = config.model.language {
+            langInfo = " (\(lang))"
+        } else {
+            langInfo = ""
         }
 
+        print("✓ Ready\(langInfo)")
+        print("")
+        print("  Double-tap Right Option to start/stop dictation")
+        print("  Ctrl+C to quit")
+        print("")
+        print("Tip: Disable macOS Dictation shortcut to avoid conflicts:")
+        print("  System Settings → Keyboard → Dictation → Shortcut → Off")
+        print("")
+        print("🎤 Waiting for input...")
+        fflush(stdout)
+
+        signal(SIGINT) { _ in
+            print("\nShutting down...")
+            Darwin.exit(0)
+        }
+
+        dispatchMain()
+    }
+
+    static func runOpenAIMode(config: Config) throws {
+        var mutableConfig = config
+        let apiKey: String
+        if let key = mutableConfig.model.apiKey, !key.isEmpty {
+            apiKey = key
+        } else if let envKey = ProcessInfo.processInfo.environment["OPENAI_API_KEY"], !envKey.isEmpty {
+            apiKey = envKey
+        } else {
+            print("Error: OpenAI API key not found")
+            print("Set OPENAI_API_KEY environment variable or add api_key to config.toml")
+            return
+        }
+
+        mutableConfig.model.apiKey = apiKey
+        if mutableConfig.model.name.isEmpty || mutableConfig.model.name.hasPrefix("openai_whisper") {
+            mutableConfig.model.name = "gpt-4o-transcribe"
+        }
+
+        let finalConfig = mutableConfig
         let semaphore = DispatchSemaphore(value: 0)
         var startError: Error?
 
@@ -801,7 +937,7 @@ struct RunOpenAI: ParsableCommand {
         let holder = ControllerHolder()
 
         Task { @MainActor in
-            let ctrl = OpenAIRealtimeController(config: config)
+            let ctrl = OpenAIRealtimeController(config: finalConfig)
             holder.controller = ctrl
 
             ctrl.onStateChange = { state in
@@ -866,93 +1002,12 @@ struct RunOpenAI: ParsableCommand {
             RunLoop.current.run(until: Date().addingTimeInterval(0.1))
         }
     }
-}
 
-struct Run: ParsableCommand {
-    static let configuration = CommandConfiguration(
-        abstract: "Run CmdSpeak (default)"
-    )
-
-    func run() throws {
-        print("CmdSpeak v\(CmdSpeakCore.version)")
-        print("Loading model...")
-
-        let config = try ConfigManager.shared.load()
-        try ConfigManager.shared.createDefaultIfNeeded()
-
-        let semaphore = DispatchSemaphore(value: 0)
-        var startError: Error?
-
-        class ControllerHolder {
-            var controller: CmdSpeakController?
-        }
-        let holder = ControllerHolder()
-
-        Task { @MainActor in
-            let ctrl = CmdSpeakController(config: config)
-            holder.controller = ctrl
-
-            ctrl.onStateChange = { state in
-                switch state {
-                case .idle:
-                    print("\n🎤 Ready - Double-tap Right Option to dictate")
-                    fflush(stdout)
-                case .listening:
-                    print("\n🔴 LISTENING - Speak now! (double-tap again to stop)")
-                    fflush(stdout)
-                case .processing:
-                    print("\n⏳ Processing...")
-                    fflush(stdout)
-                case .injecting:
-                    break
-                case .error(let message):
-                    print("❌ Error: \(message)")
-                    fflush(stdout)
-                }
-            }
-
-            do {
-                try await ctrl.start()
-            } catch {
-                startError = error
-            }
-            semaphore.signal()
-        }
-
-        while semaphore.wait(timeout: .now()) == .timedOut {
-            RunLoop.main.run(until: Date().addingTimeInterval(0.1))
-        }
-
-        if let error = startError {
-            print("Error: \(error.localizedDescription)")
-            return
-        }
-
-        let langInfo: String
-        if config.model.translateToEnglish {
-            langInfo = " (translate → English)"
-        } else if let lang = config.model.language {
-            langInfo = " (\(lang))"
-        } else {
-            langInfo = ""
-        }
-
-        print("✓ Ready\(langInfo)")
-        print("")
-        print("  Double-tap Right Option to start/stop dictation")
-        print("  Ctrl+C to quit")
-        print("")
-        print("Tip: Disable macOS Dictation shortcut to avoid conflicts:")
-        print("  System Settings → Keyboard → Dictation → Shortcut → Off")
-        print("")
-        print("🎤 Waiting for input...")
-        fflush(stdout)
-
-        signal(SIGINT) { _ in
-            print("\nShutting down...")
-            Darwin.exit(0)
-        }
-
-        dispatchMain()
+    private static func makeProgressBar(_ progress: Double, width: Int = 30) -> String {
+        let filled = Int(progress * Double(width))
+        let empty = width - filled
+        let bar = String(repeating: "█", count: filled) + String(repeating: "░", count: empty)
+        let percent = Int(progress * 100)
+        return "[\(bar)] \(percent)%"
     }
 }

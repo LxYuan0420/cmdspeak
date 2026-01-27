@@ -28,15 +28,21 @@ final class AppState: ObservableObject {
     @Published var isReady = false
     @Published var isReconnecting = false
     @Published var isFinalizing = false
+    @Published var isDownloading = false
+    @Published var downloadProgress: Double = 0
     @Published var statusText = "Initializing..."
     @Published var errorMessage: String?
     @Published var errorHint: String?
     @Published var lastTranscription: String = ""
 
     private var openAIController: OpenAIRealtimeController?
+    private var localController: CmdSpeakController?
+    private var modelType: String = "local"
 
     var menuBarIcon: String {
-        if !isReady {
+        if isDownloading {
+            return "arrow.down.circle"
+        } else if !isReady {
             return "ellipsis.circle"
         } else if isReconnecting {
             return "arrow.triangle.2.circlepath.circle"
@@ -90,92 +96,160 @@ final class AppState: ObservableObject {
     }
 
     private func initializeController() async {
-        guard let apiKey = ProcessInfo.processInfo.environment["OPENAI_API_KEY"], !apiKey.isEmpty else {
-            statusText = "OPENAI_API_KEY not set"
-            errorMessage = "Set OPENAI_API_KEY environment variable"
-            return
-        }
-
         do {
-            var config = try ConfigManager.shared.load()
-            config.model.type = "openai-realtime"
-            config.model.apiKey = apiKey
-            if config.model.name.isEmpty || config.model.name.hasPrefix("openai_whisper") {
-                config.model.name = "gpt-4o-transcribe"
+            let config = try ConfigManager.shared.load()
+            modelType = config.model.type
+
+            if config.model.type == "openai-realtime" {
+                try await initializeOpenAIController(config: config)
+            } else {
+                try await initializeLocalController(config: config)
             }
-
-            let controller = OpenAIRealtimeController(config: config)
-            self.openAIController = controller
-
-            controller.onStateChange = { [weak self] state in
-                Task { @MainActor in
-                    switch state {
-                    case .idle:
-                        self?.isListening = false
-                        self?.isReconnecting = false
-                        self?.isFinalizing = false
-                        self?.statusText = "Ready (⌥⌥ to start)"
-                        self?.lastTranscription = ""
-                    case .connecting:
-                        self?.isListening = false
-                        self?.isReconnecting = false
-                        self?.isFinalizing = false
-                        self?.statusText = "Connecting..."
-                        self?.errorMessage = nil
-                        self?.errorHint = nil
-                    case .listening:
-                        self?.isListening = true
-                        self?.isReconnecting = false
-                        self?.isFinalizing = false
-                        self?.statusText = "Listening..."
-                    case .reconnecting(let attempt, let maxAttempts):
-                        self?.isListening = false
-                        self?.isReconnecting = true
-                        self?.isFinalizing = false
-                        self?.statusText = "Reconnecting (\(attempt)/\(maxAttempts))..."
-                    case .finalizing:
-                        self?.isListening = false
-                        self?.isReconnecting = false
-                        self?.isFinalizing = true
-                        self?.statusText = "Injecting..."
-                    case .error(let msg):
-                        self?.isListening = false
-                        self?.isReconnecting = false
-                        self?.isFinalizing = false
-                        self?.statusText = "Error"
-                        self?.setError(msg)
-                    }
-                }
-            }
-
-            controller.onPartialTranscription = { [weak self] delta in
-                Task { @MainActor in
-                    self?.lastTranscription += delta
-                }
-            }
-
-            controller.onFinalTranscription = { [weak self] text in
-                Task { @MainActor in
-                    self?.lastTranscription = ""
-                }
-            }
-
-            try await controller.start()
-            isReady = true
-            statusText = "Ready (⌥⌥ to start)"
         } catch {
             errorMessage = error.localizedDescription
             statusText = "Error: \(error.localizedDescription)"
         }
     }
 
+    private func initializeLocalController(config: Config) async throws {
+        statusText = "Loading model..."
+        isDownloading = true
+        downloadProgress = 0
+
+        defer {
+            isDownloading = false
+        }
+
+        let controller = CmdSpeakController(config: config)
+        self.localController = controller
+
+        controller.onModelLoadProgress = { [weak self] progress in
+            Task { @MainActor in
+                self?.downloadProgress = progress.progress
+                self?.statusText = progress.message
+            }
+        }
+
+        controller.onStateChange = { [weak self] state in
+            switch state {
+            case .idle:
+                self?.isListening = false
+                self?.isFinalizing = false
+                self?.statusText = "Ready (⌥⌥ to start)"
+            case .listening:
+                self?.isListening = true
+                self?.isFinalizing = false
+                self?.statusText = "Listening..."
+            case .processing:
+                self?.isListening = false
+                self?.isFinalizing = true
+                self?.statusText = "Processing..."
+            case .injecting:
+                self?.isFinalizing = true
+                self?.statusText = "Injecting..."
+            case .error(let msg):
+                self?.isListening = false
+                self?.isFinalizing = false
+                self?.statusText = "Error"
+                self?.setError(msg)
+            }
+        }
+
+        try await controller.start()
+        isDownloading = false
+        isReady = true
+        statusText = "Ready (⌥⌥ to start)"
+    }
+
+    private func initializeOpenAIController(config: Config) async throws {
+        var mutableConfig = config
+
+        guard let apiKey = mutableConfig.model.apiKey ?? ProcessInfo.processInfo.environment["OPENAI_API_KEY"],
+              !apiKey.isEmpty else {
+            statusText = "OPENAI_API_KEY not set"
+            errorMessage = "Set OPENAI_API_KEY environment variable"
+            return
+        }
+
+        mutableConfig.model.apiKey = apiKey
+        if mutableConfig.model.name.isEmpty || mutableConfig.model.name.hasPrefix("openai_whisper") {
+            mutableConfig.model.name = "gpt-4o-transcribe"
+        }
+
+        let controller = OpenAIRealtimeController(config: mutableConfig)
+        self.openAIController = controller
+
+        controller.onStateChange = { [weak self] state in
+            Task { @MainActor in
+                switch state {
+                case .idle:
+                    self?.isListening = false
+                    self?.isReconnecting = false
+                    self?.isFinalizing = false
+                    self?.statusText = "Ready (⌥⌥ to start)"
+                    self?.lastTranscription = ""
+                case .connecting:
+                    self?.isListening = false
+                    self?.isReconnecting = false
+                    self?.isFinalizing = false
+                    self?.statusText = "Connecting..."
+                    self?.errorMessage = nil
+                    self?.errorHint = nil
+                case .listening:
+                    self?.isListening = true
+                    self?.isReconnecting = false
+                    self?.isFinalizing = false
+                    self?.statusText = "Listening..."
+                case .reconnecting(let attempt, let maxAttempts):
+                    self?.isListening = false
+                    self?.isReconnecting = true
+                    self?.isFinalizing = false
+                    self?.statusText = "Reconnecting (\(attempt)/\(maxAttempts))..."
+                case .finalizing:
+                    self?.isListening = false
+                    self?.isReconnecting = false
+                    self?.isFinalizing = true
+                    self?.statusText = "Injecting..."
+                case .error(let msg):
+                    self?.isListening = false
+                    self?.isReconnecting = false
+                    self?.isFinalizing = false
+                    self?.statusText = "Error"
+                    self?.setError(msg)
+                }
+            }
+        }
+
+        controller.onPartialTranscription = { [weak self] delta in
+            Task { @MainActor in
+                self?.lastTranscription += delta
+            }
+        }
+
+        controller.onFinalTranscription = { [weak self] _ in
+            Task { @MainActor in
+                self?.lastTranscription = ""
+            }
+        }
+
+        try await controller.start()
+        isReady = true
+        statusText = "Ready (⌥⌥ to start)"
+    }
+
     func stop() {
         openAIController?.stop()
+        localController?.stop()
     }
 
     func reload() async {
         openAIController?.stop()
+        localController?.stop()
+        openAIController = nil
+        localController = nil
         isReady = false
+        isDownloading = false
+        downloadProgress = 0
         statusText = "Reloading..."
         lastTranscription = ""
         await initializeController()
@@ -193,6 +267,11 @@ struct MenuBarView: View {
                     .frame(width: 8, height: 8)
                 Text(appState.statusText)
                     .font(.headline)
+            }
+
+            if appState.isDownloading {
+                ProgressView(value: appState.downloadProgress)
+                    .progressViewStyle(.linear)
             }
 
             if appState.isListening || appState.isFinalizing {
@@ -262,7 +341,9 @@ struct MenuBarView: View {
     }
 
     private var statusColor: Color {
-        if !appState.isReady {
+        if appState.isDownloading {
+            return .cyan
+        } else if !appState.isReady {
             return .orange
         } else if appState.isReconnecting {
             return .yellow

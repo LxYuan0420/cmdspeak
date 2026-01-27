@@ -30,6 +30,9 @@ public actor OpenAIRealtimeEngine: TranscriptionEngine {
     private var pingTask: Task<Void, Never>?
     private var receiveTask: Task<Void, Never>?
 
+    private var sessionReadyContinuation: CheckedContinuation<Void, Error>?
+    private var finalTranscriptContinuation: CheckedContinuation<String, Never>?
+
     private static let connectionTimeout: TimeInterval = 10.0
     private static let sessionReadyTimeout: TimeInterval = 5.0
 
@@ -112,14 +115,26 @@ public actor OpenAIRealtimeEngine: TranscriptionEngine {
     }
 
     private func waitForSessionReady() async throws {
-        let deadline = Date().addingTimeInterval(Self.sessionReadyTimeout)
+        if sessionCreated { return }
 
-        while !sessionCreated {
-            if Date() > deadline {
-                disconnect()
-                throw TranscriptionError.transcriptionFailed("Session creation timed out")
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            self.sessionReadyContinuation = continuation
+
+            Task {
+                try? await Task.sleep(nanoseconds: UInt64(Self.sessionReadyTimeout * 1_000_000_000))
+                if let cont = self.sessionReadyContinuation {
+                    self.sessionReadyContinuation = nil
+                    self.disconnect()
+                    cont.resume(throwing: TranscriptionError.transcriptionFailed("Session creation timed out"))
+                }
             }
-            try await Task.sleep(nanoseconds: 20_000_000)
+        }
+    }
+
+    private func signalSessionReady() {
+        if let continuation = sessionReadyContinuation {
+            sessionReadyContinuation = nil
+            continuation.resume()
         }
     }
 
@@ -133,6 +148,15 @@ public actor OpenAIRealtimeEngine: TranscriptionEngine {
         webSocket = nil
         urlSession = nil
         sessionCreated = false
+
+        if let cont = sessionReadyContinuation {
+            sessionReadyContinuation = nil
+            cont.resume(throwing: CancellationError())
+        }
+        if let cont = finalTranscriptContinuation {
+            finalTranscriptContinuation = nil
+            cont.resume(returning: accumulatedText)
+        }
     }
 
     public func setOnDisconnect(_ handler: (@Sendable (Bool) -> Void)?) {
@@ -237,13 +261,28 @@ public actor OpenAIRealtimeEngine: TranscriptionEngine {
     }
 
     public func awaitFinalTranscript(timeout: TimeInterval = 3.0) async -> String {
-        let deadline = Date().addingTimeInterval(timeout)
-
-        while finalTranscript == nil && Date() < deadline {
-            try? await Task.sleep(nanoseconds: 50_000_000)
+        if let transcript = finalTranscript {
+            return transcript
         }
 
-        return finalTranscript ?? accumulatedText
+        return await withCheckedContinuation { (continuation: CheckedContinuation<String, Never>) in
+            self.finalTranscriptContinuation = continuation
+
+            Task {
+                try? await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000))
+                if let cont = self.finalTranscriptContinuation {
+                    self.finalTranscriptContinuation = nil
+                    cont.resume(returning: self.finalTranscript ?? self.accumulatedText)
+                }
+            }
+        }
+    }
+
+    private func signalFinalTranscript(_ text: String) {
+        if let continuation = finalTranscriptContinuation {
+            finalTranscriptContinuation = nil
+            continuation.resume(returning: text)
+        }
     }
 
     private func configureSession() async throws {
@@ -330,6 +369,7 @@ public actor OpenAIRealtimeEngine: TranscriptionEngine {
         switch eventType {
         case "transcription_session.created":
             sessionCreated = true
+            signalSessionReady()
             Self.logger.info("Transcription session created")
 
         case "transcription_session.updated":
@@ -349,6 +389,7 @@ public actor OpenAIRealtimeEngine: TranscriptionEngine {
                 finalTranscript = accumulatedText
                 let totalChars = accumulatedText.count
                 Self.logger.info("Segment completed: \(transcript.count) chars, total: \(totalChars) chars")
+                signalFinalTranscript(accumulatedText)
                 onFinalTranscript?(accumulatedText)
             }
 
