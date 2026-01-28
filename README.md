@@ -2,19 +2,32 @@
 
 Drop-in replacement for macOS Dictation. Double-tap ⌥, speak, text appears at cursor.
 
-## Quick Start
+## Installation
+
+### Homebrew (recommended)
+
+```bash
+brew tap LxYuan0420/cmdspeak
+brew install cmdspeak
+```
+
+### Build from source
 
 ```bash
 git clone https://github.com/LxYuan0420/cmdspeak.git
 cd cmdspeak
-swift build -c release
+make install  # Installs to /usr/local/bin
+```
 
+## Quick Start
+
+```bash
 # Local mode (on-device, private, no API key needed)
-.build/release/cmdspeak run
+cmdspeak run
 
 # OpenAI mode (streaming, requires API key)
 export OPENAI_API_KEY=your-key
-.build/release/cmdspeak run-openai
+cmdspeak run-openai
 ```
 
 **Usage:** `⌥⌥ start → speak → ⌥⌥ stop` (or silence auto-injects)
@@ -44,23 +57,14 @@ The default `run` command auto-selects mode based on your config file.
 - For OpenAI mode: API key
 - Disable macOS Dictation: System Settings → Keyboard → Dictation → Shortcut → Off
 
-## Installation
+## Menu Bar App
 
-### Build from source
+For background operation, build and run the menu bar app:
 
 ```bash
 git clone https://github.com/LxYuan0420/cmdspeak.git
 cd cmdspeak
 swift build -c release
-```
-
-### Run
-
-```bash
-# CLI (auto-selects mode from config)
-.build/release/cmdspeak run
-
-# Menu bar app
 .build/release/CmdSpeakApp
 ```
 
