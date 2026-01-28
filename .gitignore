@@ -1,6 +1,7 @@
 # Documentation
 *.md
 !README.md
+!HOMEBREW.md
 PRODUCT.md
 
 .build/
