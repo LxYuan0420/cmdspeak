@@ -821,6 +821,7 @@ struct Run: ParsableCommand {
         let semaphore = DispatchSemaphore(value: 0)
         var startError: Error?
         var lastProgressMessage = ""
+        var accumulatedTranscription = ""
 
         class ControllerHolder {
             var controller: CmdSpeakController?
@@ -845,16 +846,36 @@ struct Run: ParsableCommand {
                 }
             }
 
+            ctrl.onPartialTranscription = { delta in
+                accumulatedTranscription += delta
+                let clearLine = "\r\u{001B}[K"
+                let preview = accumulatedTranscription.count > 60
+                    ? "..." + accumulatedTranscription.suffix(57)
+                    : accumulatedTranscription
+                print("\(clearLine)📝 \(preview)", terminator: "")
+                fflush(stdout)
+            }
+
+            ctrl.onFinalTranscription = { _ in
+                print("")
+                accumulatedTranscription = ""
+            }
+
             ctrl.onStateChange = { state in
                 switch state {
                 case .idle:
+                    accumulatedTranscription = ""
                     print("\n🎤 Ready - Double-tap Right Option to dictate")
                     fflush(stdout)
                 case .listening:
                     print("\n🔴 LISTENING - Speak now! (double-tap again to stop)")
                     fflush(stdout)
                 case .processing:
-                    print("\n⏳ Processing...")
+                    if accumulatedTranscription.isEmpty {
+                        print("\n⏳ Processing...")
+                    } else {
+                        print("\n⏳ Finalizing...")
+                    }
                     fflush(stdout)
                 case .injecting:
                     break

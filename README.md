@@ -45,6 +45,7 @@ The default `run` command auto-selects mode based on your config file.
 
 - **Double-tap Right Option (⌥⌥)** to start/stop dictation
 - **Text injection** at cursor via Accessibility API
+- **Streaming transcription** — see words appear in real-time
 - **Menu bar app** for background operation
 - **Progress UI** showing model download and loading status
 - **Audio feedback** sounds on start/stop
@@ -135,7 +136,8 @@ User → ⌥⌥ Hotkey → Audio Capture → Transcription Engine → Text Injec
 - [x] Menu bar app
 - [x] Model download progress UI
 - [x] Unified mode selection
-- [ ] Homebrew distribution
+- [x] Streaming transcription for local mode
+- [x] Homebrew distribution
 - [ ] DMG installer
 
 ## License

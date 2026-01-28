@@ -20,6 +20,8 @@ public final class CmdSpeakController {
     public private(set) var state: State = .idle
     public var onStateChange: ((State) -> Void)?
     public var onModelLoadProgress: ((ModelLoadProgress) -> Void)?
+    public var onPartialTranscription: ((String) -> Void)?
+    public var onFinalTranscription: ((String) -> Void)?
 
     private let config: Config
     private let audioCapture: AudioCaptureManager
@@ -240,7 +242,13 @@ public final class CmdSpeakController {
 
         do {
             Self.logger.info("Transcribing")
-            let result = try await engine.transcribe(audioSamples: samples)
+
+            let partialCallback = onPartialTranscription
+            let result = try await engine.transcribe(audioSamples: samples) { delta in
+                Task { @MainActor in
+                    partialCallback?(delta)
+                }
+            }
 
             guard !result.text.isEmpty else {
                 Self.logger.debug("Empty transcription")
@@ -249,6 +257,7 @@ public final class CmdSpeakController {
             }
 
             Self.logger.info("Result: \"\(result.text)\"")
+            onFinalTranscription?(result.text)
             setState(.injecting)
             try injector.inject(text: result.text)
             playFeedbackSound(start: false)

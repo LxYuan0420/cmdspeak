@@ -130,12 +130,25 @@ final class AppState: ObservableObject {
             }
         }
 
+        controller.onPartialTranscription = { [weak self] delta in
+            Task { @MainActor in
+                self?.lastTranscription += delta
+            }
+        }
+
+        controller.onFinalTranscription = { [weak self] _ in
+            Task { @MainActor in
+                self?.lastTranscription = ""
+            }
+        }
+
         controller.onStateChange = { [weak self] state in
             switch state {
             case .idle:
                 self?.isListening = false
                 self?.isFinalizing = false
                 self?.statusText = "Ready (⌥⌥ to start)"
+                self?.lastTranscription = ""
             case .listening:
                 self?.isListening = true
                 self?.isFinalizing = false

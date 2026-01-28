@@ -176,6 +176,15 @@ public actor WhisperKitEngine: TranscriptionEngine {
     }
 
     public func transcribe(audioSamples: [Float]) async throws -> TranscriptionResult {
+        try await transcribe(audioSamples: audioSamples, progressCallback: nil)
+    }
+
+    /// Transcribe audio with streaming progress callback.
+    /// The callback receives partial text as transcription progresses.
+    public func transcribe(
+        audioSamples: [Float],
+        progressCallback: (@Sendable (String) -> Void)?
+    ) async throws -> TranscriptionResult {
         guard let kit = whisperKit else {
             throw TranscriptionError.notInitialized
         }
@@ -195,7 +204,19 @@ public actor WhisperKitEngine: TranscriptionEngine {
         )
 
         do {
-            let results = try await kit.transcribe(audioArray: audioSamples, decodeOptions: options)
+            var lastReportedText = ""
+
+            let callback: TranscriptionCallback = progressCallback != nil ? { progress in
+                let currentText = progress.text.trimmingCharacters(in: .whitespaces)
+                if currentText.count > lastReportedText.count {
+                    let newText = String(currentText.dropFirst(lastReportedText.count))
+                    lastReportedText = currentText
+                    progressCallback?(newText)
+                }
+                return true
+            } : nil
+
+            let results = try await kit.transcribe(audioArray: audioSamples, decodeOptions: options, callback: callback)
             let processingTime = Date().timeIntervalSince(startTime)
             let rtf = processingTime / audioDuration
 
