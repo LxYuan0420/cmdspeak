@@ -203,6 +203,11 @@ public actor OpenAIRealtimeEngine: TranscriptionEngine {
         }
     }
 
+    private static let jsonEncoder: JSONEncoder = {
+        let encoder = JSONEncoder()
+        return encoder
+    }()
+
     public func sendAudio(samples: [Float]) async throws {
         guard let ws = webSocket else {
             throw TranscriptionError.notInitialized
@@ -216,12 +221,8 @@ public actor OpenAIRealtimeEngine: TranscriptionEngine {
         let pcmData = convertToPCM16(samples: samples)
         let base64Audio = pcmData.base64EncodedString()
 
-        let event: [String: Any] = [
-            "type": "input_audio_buffer.append",
-            "audio": base64Audio
-        ]
-
-        let jsonData = try JSONSerialization.data(withJSONObject: event)
+        let message = InputAudioBufferAppend(audio: base64Audio)
+        let jsonData = try Self.jsonEncoder.encode(message)
         let jsonString = String(data: jsonData, encoding: .utf8)!
 
         try await ws.send(.string(jsonString))
@@ -232,11 +233,8 @@ public actor OpenAIRealtimeEngine: TranscriptionEngine {
             throw TranscriptionError.notInitialized
         }
 
-        let event: [String: Any] = [
-            "type": "input_audio_buffer.commit"
-        ]
-
-        let jsonData = try JSONSerialization.data(withJSONObject: event)
+        let message = InputAudioBufferCommit()
+        let jsonData = try Self.jsonEncoder.encode(message)
         let jsonString = String(data: jsonData, encoding: .utf8)!
 
         try await ws.send(.string(jsonString))
@@ -288,30 +286,8 @@ public actor OpenAIRealtimeEngine: TranscriptionEngine {
     private func configureSession() async throws {
         guard let ws = webSocket else { return }
 
-        var transcriptionConfig: [String: Any] = [
-            "model": model,
-            "prompt": "Transcribe in any language including mixed language content"
-        ]
-
-        if let lang = language {
-            transcriptionConfig["language"] = lang
-        }
-
-        let sessionConfig: [String: Any] = [
-            "type": "transcription_session.update",
-            "session": [
-                "input_audio_format": "pcm16",
-                "input_audio_transcription": transcriptionConfig,
-                "turn_detection": [
-                    "type": "server_vad",
-                    "threshold": 0.5,
-                    "prefix_padding_ms": 100,
-                    "silence_duration_ms": 300
-                ] as [String: Any]
-            ] as [String: Any]
-        ]
-
-        let jsonData = try JSONSerialization.data(withJSONObject: sessionConfig)
+        let message = TranscriptionSessionUpdate(model: model, language: language)
+        let jsonData = try Self.jsonEncoder.encode(message)
         let jsonString = String(data: jsonData, encoding: .utf8)!
 
         try await ws.send(.string(jsonString))
@@ -358,62 +334,67 @@ public actor OpenAIRealtimeEngine: TranscriptionEngine {
         }
     }
 
+    private static let jsonDecoder = JSONDecoder()
+
     private func handleMessage(_ text: String) async {
-        guard let data = text.data(using: .utf8),
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let eventType = json["type"] as? String else {
+        guard let data = text.data(using: .utf8) else {
+            Self.logger.warning("Received non-UTF8 message")
+            return
+        }
+
+        guard let baseMessage = try? Self.jsonDecoder.decode(OpenAIIncomingMessage.self, from: data) else {
             Self.logger.warning("Received malformed message")
             return
         }
 
+        guard let eventType = OpenAIEventType(rawValue: baseMessage.type) else {
+            return
+        }
+
         switch eventType {
-        case "transcription_session.created":
+        case .sessionCreated:
             sessionCreated = true
             signalSessionReady()
             Self.logger.info("Transcription session created")
 
-        case "transcription_session.updated":
+        case .sessionUpdated:
             Self.logger.debug("Transcription session updated")
 
-        case "conversation.item.input_audio_transcription.delta":
-            if let delta = json["delta"] as? String {
-                accumulatedText += delta
-                partialTranscriptionHandler?(delta)
+        case .transcriptionDelta:
+            if let deltaMessage = try? Self.jsonDecoder.decode(TranscriptionDelta.self, from: data) {
+                accumulatedText += deltaMessage.delta
+                partialTranscriptionHandler?(deltaMessage.delta)
             }
 
-        case "conversation.item.input_audio_transcription.completed":
-            if let transcript = json["transcript"] as? String {
+        case .transcriptionCompleted:
+            if let completedMessage = try? Self.jsonDecoder.decode(TranscriptionCompleted.self, from: data) {
                 if accumulatedText.isEmpty {
-                    accumulatedText = transcript
+                    accumulatedText = completedMessage.transcript
                 }
                 finalTranscript = accumulatedText
                 let totalChars = accumulatedText.count
-                Self.logger.info("Segment completed: \(transcript.count) chars, total: \(totalChars) chars")
+                Self.logger.info("Segment completed: \(completedMessage.transcript.count) chars, total: \(totalChars) chars")
                 signalFinalTranscript(accumulatedText)
                 onFinalTranscript?(accumulatedText)
             }
 
-        case "input_audio_buffer.speech_started":
+        case .speechStarted:
             Self.logger.debug("Speech started")
             onSpeechStarted?()
 
-        case "input_audio_buffer.speech_stopped":
+        case .speechStopped:
             Self.logger.debug("Speech stopped")
             onSpeechStopped?()
 
-        case "input_audio_buffer.committed":
+        case .audioCommitted:
             Self.logger.debug("Audio committed by server")
 
-        case "error":
-            if let error = json["error"] as? [String: Any],
-               let message = error["message"] as? String {
-                let code = error["code"] as? String ?? "unknown"
-                Self.logger.error("API error [\(code)]: \(message)")
-                onError?(message)
+        case .error:
+            if let errorMessage = try? Self.jsonDecoder.decode(OpenAIError.self, from: data) {
+                let code = errorMessage.error.code ?? "unknown"
+                Self.logger.error("API error [\(code)]: \(errorMessage.error.message)")
+                onError?(errorMessage.error.message)
             }
-
-        default:
-            break
         }
     }
 

@@ -2,18 +2,23 @@ import AVFoundation
 import Foundation
 import os
 
-/// Resamples audio to 24kHz mono for OpenAI Realtime API using AVAudioConverter.
+/// Resamples audio to a target sample rate using AVAudioConverter.
+/// Defaults to 24kHz for OpenAI Realtime API, but can be configured for WhisperKit (16kHz).
 public final class AudioResampler {
     private static let logger = Logger(subsystem: "com.cmdspeak", category: "resampler")
 
-    private let targetSampleRate: Double = 24000
+    private let targetSampleRate: Double
     private let targetChannels: AVAudioChannelCount = 1
 
     private var converter: AVAudioConverter?
     private var outputFormat: AVAudioFormat?
     private var lastInputFormat: AVAudioFormat?
 
-    public init() {}
+    /// Initialize with target sample rate.
+    /// - Parameter targetSampleRate: Target sample rate in Hz (default: 24000 for OpenAI, use 16000 for WhisperKit)
+    public init(targetSampleRate: Double = 24000) {
+        self.targetSampleRate = targetSampleRate
+    }
 
     public func resample(_ inputBuffer: AVAudioPCMBuffer) -> [Float]? {
         let inputFormat = inputBuffer.format

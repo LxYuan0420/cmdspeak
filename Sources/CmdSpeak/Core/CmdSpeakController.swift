@@ -29,6 +29,7 @@ public final class CmdSpeakController {
     private let engine: WhisperKitEngine
     private let injector: TextInjector
     private let hotkeyManager: HotkeyManager
+    private let resampler: AudioResampler
 
     private var audioBuffer: [Float] = []
     private let bufferQueue = DispatchQueue(label: "com.cmdspeak.buffer", qos: .userInteractive)
@@ -48,6 +49,7 @@ public final class CmdSpeakController {
         self.hotkeyManager = HotkeyManager(
             doubleTapInterval: TimeInterval(config.hotkey.intervalMs) / 1000.0
         )
+        self.resampler = AudioResampler(targetSampleRate: 16000)
 
         setupCallbacks()
     }
@@ -172,32 +174,12 @@ public final class CmdSpeakController {
     }
 
     private var lastBufferLogTime: Date?
-    
+
     private func handleAudioBuffer(_ buffer: AVAudioPCMBuffer) {
-        guard let channelData = buffer.floatChannelData?[0] else { return }
-        let frameLength = Int(buffer.frameLength)
-        let inputSampleRate = buffer.format.sampleRate
-        let targetSampleRate = 16000.0
+        guard let resampled = resampler.resample(buffer) else { return }
 
-        if inputSampleRate != targetSampleRate && inputSampleRate > 0 {
-            let ratio = inputSampleRate / targetSampleRate
-            let outputLength = Int(Double(frameLength) / ratio)
-            guard outputLength > 0 else { return }
-
-            bufferQueue.sync {
-                for i in 0..<outputLength {
-                    let srcIndex = Int(Double(i) * ratio)
-                    if srcIndex < frameLength {
-                        audioBuffer.append(channelData[srcIndex])
-                    }
-                }
-            }
-        } else {
-            bufferQueue.sync {
-                for i in 0..<frameLength {
-                    audioBuffer.append(channelData[i])
-                }
-            }
+        bufferQueue.sync {
+            audioBuffer.append(contentsOf: resampled)
         }
 
         let now = Date()
