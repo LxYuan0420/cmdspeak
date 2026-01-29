@@ -186,6 +186,8 @@ public final class ConfigManager {
         [model]
         type = "\(config.model.type)"
         name = "\(config.model.name)"
+        # language = "en"  # Optional: force language (omit for auto-detect, supports 99+ languages)
+        # translate_to_english = false  # Optional: translate all speech to English
         """
 
         if let language = config.model.language {

@@ -46,10 +46,10 @@ The default `run` command auto-selects mode based on your config file.
 - **Double-tap Right Option (⌥⌥)** to start/stop dictation
 - **Text injection** at cursor via Accessibility API
 - **Streaming transcription** — see words appear in real-time
+- **Multi-language support** — auto-detects 99+ languages per utterance
 - **Menu bar app** for background operation
 - **Progress UI** showing model download and loading status
 - **Audio feedback** sounds on start/stop
-- **Auto-language detection** (or specify language in config)
 
 ## Requirements
 
@@ -88,8 +88,8 @@ cmdspeak test-hotkey    # Test ⌥⌥ detection
 [model]
 type = "local"                              # "local" or "openai-realtime"
 name = "openai_whisper-large-v3_turbo"      # Model name
-# language = "en"                           # Optional: force language
-# translate_to_english = false              # Optional: translate to English
+# language = "en"                           # Optional: force language (omit for auto-detect)
+# translate_to_english = false              # Optional: translate all speech to English
 
 [hotkey]
 trigger = "double-tap-right-option"

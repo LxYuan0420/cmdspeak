@@ -22,6 +22,7 @@ public final class CmdSpeakController {
     public var onModelLoadProgress: ((ModelLoadProgress) -> Void)?
     public var onPartialTranscription: ((String) -> Void)?
     public var onFinalTranscription: ((String) -> Void)?
+    public var onLanguageDetected: ((String) -> Void)?
 
     private let config: Config
     private let audioCapture: AudioCaptureManager
@@ -236,6 +237,11 @@ public final class CmdSpeakController {
                 Self.logger.debug("Empty transcription")
                 setState(.idle)
                 return
+            }
+
+            if let lang = result.language {
+                Self.logger.info("Detected language: \(lang)")
+                onLanguageDetected?(lang)
             }
 
             Self.logger.info("Result: \"\(result.text)\"")

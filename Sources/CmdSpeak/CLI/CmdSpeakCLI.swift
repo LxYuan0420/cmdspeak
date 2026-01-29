@@ -861,6 +861,12 @@ struct Run: ParsableCommand {
                 accumulatedTranscription = ""
             }
 
+            ctrl.onLanguageDetected = { language in
+                let langName = Self.languageName(for: language)
+                print("🌐 \(langName)")
+                fflush(stdout)
+            }
+
             ctrl.onStateChange = { state in
                 switch state {
                 case .idle:
@@ -1030,5 +1036,13 @@ struct Run: ParsableCommand {
         let bar = String(repeating: "█", count: filled) + String(repeating: "░", count: empty)
         let percent = Int(progress * 100)
         return "[\(bar)] \(percent)%"
+    }
+
+    private static func languageName(for code: String) -> String {
+        let locale = Locale(identifier: "en")
+        if let name = locale.localizedString(forLanguageCode: code) {
+            return "\(name) (\(code))"
+        }
+        return code
     }
 }

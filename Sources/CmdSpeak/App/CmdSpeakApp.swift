@@ -34,6 +34,7 @@ final class AppState: ObservableObject {
     @Published var errorMessage: String?
     @Published var errorHint: String?
     @Published var lastTranscription: String = ""
+    @Published var detectedLanguage: String?
 
     private var openAIController: OpenAIRealtimeController?
     private var localController: CmdSpeakController?
@@ -142,6 +143,12 @@ final class AppState: ObservableObject {
             }
         }
 
+        controller.onLanguageDetected = { [weak self] language in
+            Task { @MainActor in
+                self?.detectedLanguage = language
+            }
+        }
+
         controller.onStateChange = { [weak self] state in
             switch state {
             case .idle:
@@ -149,6 +156,7 @@ final class AppState: ObservableObject {
                 self?.isFinalizing = false
                 self?.statusText = "Ready (⌥⌥ to start)"
                 self?.lastTranscription = ""
+                self?.detectedLanguage = nil
             case .listening:
                 self?.isListening = true
                 self?.isFinalizing = false
@@ -291,6 +299,16 @@ struct MenuBarView: View {
                 transcriptionPreview
             }
 
+            if let lang = appState.detectedLanguage {
+                HStack(spacing: 4) {
+                    Text("🌐")
+                        .font(.caption)
+                    Text(languageName(for: lang))
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+            }
+
             if let error = appState.errorMessage {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(error)
@@ -369,6 +387,14 @@ struct MenuBarView: View {
         } else {
             return .green
         }
+    }
+
+    private func languageName(for code: String) -> String {
+        let locale = Locale(identifier: "en")
+        if let name = locale.localizedString(forLanguageCode: code) {
+            return "\(name) (\(code))"
+        }
+        return code
     }
 }
 
