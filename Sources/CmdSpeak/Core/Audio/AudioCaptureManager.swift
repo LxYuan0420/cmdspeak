@@ -4,15 +4,19 @@ import os
 
 /// Captures audio from the default input device using AVAudioEngine.
 /// Provides audio buffers via callback for transcription.
+///
+/// Note: `onAudioBuffer` is called on a dedicated audio callback queue,
+/// not the main thread. Callers must dispatch to main if needed.
 @MainActor
 public final class AudioCaptureManager {
     private static let logger = Logger(subsystem: "com.cmdspeak", category: "audio-capture")
 
     private var audioEngine: AVAudioEngine?
     private let bufferSize: AVAudioFrameCount = 4096
+    private let callbackQueue = DispatchQueue(label: "com.cmdspeak.audio.callback", qos: .userInteractive)
 
     public private(set) var isRecording = false
-    public var onAudioBuffer: ((_ buffer: AVAudioPCMBuffer) -> Void)?
+    public var onAudioBuffer: (@Sendable (_ buffer: AVAudioPCMBuffer) -> Void)?
 
     public init() {}
 
@@ -43,9 +47,10 @@ public final class AudioCaptureManager {
         Self.logger.info("Audio input: \(inputFormat.sampleRate)Hz, \(inputFormat.channelCount) channels")
 
         let callback = onAudioBuffer
+        let queue = callbackQueue
         inputNode.installTap(onBus: 0, bufferSize: bufferSize, format: inputFormat) { [weak self] buffer, _ in
             guard self != nil else { return }
-            Task { @MainActor in
+            queue.async {
                 callback?(buffer)
             }
         }
@@ -76,8 +81,6 @@ public final class AudioCaptureManager {
 public enum AudioCaptureError: Error, LocalizedError {
     case permissionDenied
     case noInputDevice
-    case formatCreationFailed
-    case converterCreationFailed
     case engineStartFailed(Error)
 
     public var errorDescription: String? {
@@ -86,10 +89,6 @@ public enum AudioCaptureError: Error, LocalizedError {
             return "Microphone permission denied"
         case .noInputDevice:
             return "No audio input device found"
-        case .formatCreationFailed:
-            return "Failed to create audio format"
-        case .converterCreationFailed:
-            return "Failed to create audio converter"
         case .engineStartFailed(let error):
             return "Failed to start audio engine: \(error.localizedDescription)"
         }

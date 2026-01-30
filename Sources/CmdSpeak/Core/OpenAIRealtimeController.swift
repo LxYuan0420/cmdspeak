@@ -79,15 +79,15 @@ public final class OpenAIRealtimeController {
 
     private func setupCallbacks() {
         hotkeyManager.onHotkeyTriggered = { [weak self] in
-            DispatchQueue.main.async {
-                Task { @MainActor in
-                    await self?.handleHotkeyTriggered()
-                }
+            Task { @MainActor in
+                await self?.handleHotkeyTriggered()
             }
         }
 
         audioCapture.onAudioBuffer = { [weak self] buffer in
-            self?.handleAudioBuffer(buffer)
+            Task { @MainActor in
+                self?.handleAudioBuffer(buffer)
+            }
         }
 
         Task {

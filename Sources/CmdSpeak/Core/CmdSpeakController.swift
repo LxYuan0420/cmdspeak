@@ -55,6 +55,10 @@ public final class CmdSpeakController {
         setupCallbacks()
     }
 
+    deinit {
+        maxDurationTimer?.invalidate()
+    }
+
     private func setupCallbacks() {
         Self.logger.debug("Setting up callbacks")
         hotkeyManager.onHotkeyTriggered = { [weak self] in
@@ -71,7 +75,9 @@ public final class CmdSpeakController {
         }
 
         audioCapture.onAudioBuffer = { [weak self] buffer in
-            self?.handleAudioBuffer(buffer)
+            Task { @MainActor in
+                self?.handleAudioBuffer(buffer)
+            }
         }
     }
 
@@ -175,18 +181,22 @@ public final class CmdSpeakController {
     }
 
     private var lastBufferLogTime: Date?
+    private static let expectedBufferCapacity = Int(60 * 16000)
 
     private func handleAudioBuffer(_ buffer: AVAudioPCMBuffer) {
         guard let resampled = resampler.resample(buffer) else { return }
 
+        var totalSamples = 0
         bufferQueue.sync {
+            if audioBuffer.isEmpty {
+                audioBuffer.reserveCapacity(Self.expectedBufferCapacity)
+            }
             audioBuffer.append(contentsOf: resampled)
+            totalSamples = audioBuffer.count
         }
 
         let now = Date()
         if lastBufferLogTime.map({ now.timeIntervalSince($0) >= 0.5 }) ?? true {
-            var totalSamples = 0
-            bufferQueue.sync { totalSamples = audioBuffer.count }
             Self.logger.debug("Audio buffer: \(totalSamples) samples (\(String(format: "%.1f", Double(totalSamples) / 16000.0))s)")
             lastBufferLogTime = now
         }
@@ -267,9 +277,7 @@ public final class CmdSpeakController {
 
     private func setState(_ newState: State) {
         state = newState
-        DispatchQueue.main.async { [weak self] in
-            self?.onStateChange?(newState)
-        }
+        onStateChange?(newState)
     }
 
     private func playFeedbackSound(start: Bool) {

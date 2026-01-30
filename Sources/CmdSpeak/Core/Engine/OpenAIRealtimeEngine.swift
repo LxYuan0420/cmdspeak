@@ -146,6 +146,7 @@ public actor OpenAIRealtimeEngine: TranscriptionEngine {
         pingTask = nil
         webSocket?.cancel(with: .normalClosure, reason: nil)
         webSocket = nil
+        urlSession?.invalidateAndCancel()
         urlSession = nil
         sessionCreated = false
 
@@ -399,12 +400,12 @@ public actor OpenAIRealtimeEngine: TranscriptionEngine {
     }
 
     private func convertToPCM16(samples: [Float]) -> Data {
-        var data = Data(capacity: samples.count * 2)
-        for sample in samples {
-            let clamped = max(-1.0, min(1.0, sample))
-            let int16Value = Int16(clamped * Float(Int16.max))
-            withUnsafeBytes(of: int16Value.littleEndian) { bytes in
-                data.append(contentsOf: bytes)
+        var data = Data(count: samples.count * MemoryLayout<Int16>.size)
+        data.withUnsafeMutableBytes { raw in
+            let out = raw.bindMemory(to: Int16.self)
+            for i in samples.indices {
+                let clamped = max(-1.0, min(1.0, samples[i]))
+                out[i] = Int16(clamped * Float(Int16.max)).littleEndian
             }
         }
         return data

@@ -1,6 +1,10 @@
 # CmdSpeak
 
-Drop-in replacement for macOS Dictation. Double-tap ⌥, speak, text appears at cursor.
+[![Swift 5.10](https://img.shields.io/badge/Swift-5.10-orange.svg)](https://swift.org)
+[![macOS 14+](https://img.shields.io/badge/macOS-14%2B-blue.svg)](https://developer.apple.com/macos/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+
+Drop-in replacement for macOS Dictation. Double-tap ⌥⌥, speak, text appears at cursor.
 
 ## Installation
 
@@ -30,7 +34,7 @@ export OPENAI_API_KEY=your-key
 cmdspeak run-openai
 ```
 
-**Usage:** `⌥⌥ start → speak → ⌥⌥ stop` (or silence auto-injects)
+**Usage:** Double-tap Right Option (⌥⌥) to start → speak → ⌥⌥ to stop (or wait for silence auto-inject)
 
 ## Modes
 
@@ -47,7 +51,8 @@ The default `run` command auto-selects mode based on your config file.
 - **Text injection** at cursor via Accessibility API
 - **Streaming transcription** — see words appear in real-time
 - **Multi-language support** — auto-detects 99+ languages per utterance
-- **Menu bar app** for background operation
+- **Voice Activity Detection** — auto-stops after silence
+- **Menu bar app** for background operation with visual feedback
 - **Progress UI** showing model download and loading status
 - **Audio feedback** sounds on start/stop
 
@@ -63,11 +68,14 @@ The default `run` command auto-selects mode based on your config file.
 For background operation, build and run the menu bar app:
 
 ```bash
-git clone https://github.com/LxYuan0420/cmdspeak.git
-cd cmdspeak
 swift build -c release
 .build/release/CmdSpeakApp
 ```
+
+The menu bar app shows:
+- **Status indicator** — color-coded (green=ready, blue=listening, purple=processing)
+- **Live transcription** — see text as you speak
+- **Download progress** — model download and ANE compilation status
 
 ## Commands
 
@@ -129,16 +137,37 @@ User → ⌥⌥ Hotkey → Audio Capture → Transcription Engine → Text Injec
                            WhisperKit (local) or OpenAI (streaming)
 ```
 
+## Troubleshooting
+
+### Hotkey not working
+- Ensure Accessibility permission is granted: System Settings → Privacy & Security → Accessibility → Enable CmdSpeak
+- Disable macOS Dictation shortcut: System Settings → Keyboard → Dictation → Shortcut → Off
+
+### No audio captured
+- Grant Microphone permission: System Settings → Privacy & Security → Microphone → Enable CmdSpeak
+- Check audio input device: System Settings → Sound → Input
+
+### Model loading slow on first run
+- ANE compilation takes 2-4 minutes on first run (cached after)
+- Progress is shown in CLI and menu bar
+
 ## Roadmap
 
 - [x] OpenAI Realtime streaming
 - [x] WhisperKit local transcription  
-- [x] Menu bar app
+- [x] Menu bar app with visual feedback
 - [x] Model download progress UI
 - [x] Unified mode selection
 - [x] Streaming transcription for local mode
 - [x] Homebrew distribution
+- [x] Voice Activity Detection (VAD)
+- [ ] System permissions onboarding flow
 - [ ] DMG installer
+- [ ] Code signing for Gatekeeper
+
+## Contributing
+
+Contributions welcome! Please open an issue or pull request.
 
 ## License
 
