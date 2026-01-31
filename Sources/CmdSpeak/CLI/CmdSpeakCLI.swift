@@ -1051,7 +1051,9 @@ struct Run: ParsableCommand {
             Darwin.exit(0)
         }
 
-        dispatchMain()
+        while true {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+        }
     }
 
     static func runOpenAIMode(config: Config) throws {
