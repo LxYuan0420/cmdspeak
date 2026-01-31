@@ -83,7 +83,8 @@ The menu bar app shows:
 cmdspeak run            # Run with mode from config (local or openai-realtime)
 cmdspeak run-local      # Force local WhisperKit mode
 cmdspeak run-openai     # Force OpenAI streaming mode
-cmdspeak status         # Show current config
+cmdspeak setup          # Setup permissions (guided onboarding)
+cmdspeak status         # Show current config and permissions
 cmdspeak test-mic       # Test microphone
 cmdspeak test-hotkey    # Test ⌥⌥ detection
 ```
@@ -139,11 +140,20 @@ User → ⌥⌥ Hotkey → Audio Capture → Transcription Engine → Text Injec
 
 ## Troubleshooting
 
+### First-time setup
+Run `cmdspeak setup` for guided permission configuration. This will:
+1. Request microphone permission (system dialog)
+2. Request accessibility permission (opens System Settings)
+3. Wait for you to grant permissions
+4. Confirm everything is working
+
 ### Hotkey not working
+- Run `cmdspeak setup` to check and fix permissions
 - Ensure Accessibility permission is granted: System Settings → Privacy & Security → Accessibility → Enable CmdSpeak
 - Disable macOS Dictation shortcut: System Settings → Keyboard → Dictation → Shortcut → Off
 
 ### No audio captured
+- Run `cmdspeak setup` to check microphone permission
 - Grant Microphone permission: System Settings → Privacy & Security → Microphone → Enable CmdSpeak
 - Check audio input device: System Settings → Sound → Input
 
@@ -161,7 +171,7 @@ User → ⌥⌥ Hotkey → Audio Capture → Transcription Engine → Text Injec
 - [x] Streaming transcription for local mode
 - [x] Homebrew distribution
 - [x] Voice Activity Detection (VAD)
-- [ ] System permissions onboarding flow
+- [x] System permissions onboarding flow
 - [ ] DMG installer
 - [ ] Code signing for Gatekeeper
 

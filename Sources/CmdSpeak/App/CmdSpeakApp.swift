@@ -35,6 +35,8 @@ final class AppState: ObservableObject {
     @Published var errorHint: String?
     @Published var lastTranscription: String = ""
     @Published var detectedLanguage: String?
+    @Published var needsPermissions = false
+    @Published var permissionsState: PermissionsManager.PermissionsState?
 
     private var openAIController: OpenAIRealtimeController?
     private var localController: CmdSpeakController?
@@ -97,6 +99,38 @@ final class AppState: ObservableObject {
     }
 
     private func initializeController() async {
+        // Check permissions first
+        let state = PermissionsManager.shared.checkPermissions()
+        permissionsState = state
+
+        if !state.allGranted {
+            needsPermissions = true
+            statusText = "Permissions required"
+
+            // Run onboarding in background
+            let success = await PermissionsManager.shared.runOnboarding(
+                onStatus: { [weak self] message in
+                    Task { @MainActor in
+                        self?.statusText = message
+                    }
+                },
+                onPermissionGranted: { [weak self] permission in
+                    Task { @MainActor in
+                        self?.permissionsState = PermissionsManager.shared.checkPermissions()
+                    }
+                }
+            )
+
+            if !success {
+                errorMessage = "Permissions not granted"
+                errorHint = "Grant permissions in System Settings"
+                return
+            }
+
+            needsPermissions = false
+            permissionsState = PermissionsManager.shared.checkPermissions()
+        }
+
         do {
             let config = try ConfigManager.shared.load()
             modelType = config.model.type
@@ -290,6 +324,10 @@ struct MenuBarView: View {
                     .font(.headline)
             }
 
+            if appState.needsPermissions, let state = appState.permissionsState {
+                permissionsView(state: state)
+            }
+
             if appState.isDownloading {
                 ProgressView(value: appState.downloadProgress)
                     .progressViewStyle(.linear)
@@ -335,6 +373,18 @@ struct MenuBarView: View {
 
             Divider()
 
+            if appState.needsPermissions {
+                Button("Open Accessibility Settings") {
+                    PermissionsManager.shared.openAccessibilitySettings()
+                }
+
+                Button("Open Microphone Settings") {
+                    PermissionsManager.shared.openMicrophoneSettings()
+                }
+
+                Divider()
+            }
+
             Button("Reload") {
                 Task {
                     await appState.reload()
@@ -350,6 +400,24 @@ struct MenuBarView: View {
             .keyboardShortcut("q")
         }
         .padding(.vertical, 4)
+    }
+
+    @ViewBuilder
+    private func permissionsView(state: PermissionsManager.PermissionsState) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(spacing: 4) {
+                Image(systemName: state.microphone == .granted ? "checkmark.circle.fill" : "xmark.circle")
+                    .foregroundColor(state.microphone == .granted ? .green : .red)
+                Text("Microphone")
+                    .font(.caption)
+            }
+            HStack(spacing: 4) {
+                Image(systemName: state.accessibility == .granted ? "checkmark.circle.fill" : "xmark.circle")
+                    .foregroundColor(state.accessibility == .granted ? .green : .red)
+                Text("Accessibility")
+                    .font(.caption)
+            }
+        }
     }
 
     @ViewBuilder

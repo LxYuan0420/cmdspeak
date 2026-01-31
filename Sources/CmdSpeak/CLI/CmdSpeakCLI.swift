@@ -10,7 +10,7 @@ struct CmdSpeakCLI: AsyncParsableCommand {
         commandName: "cmdspeak",
         abstract: "Drop-in replacement for macOS Dictation",
         version: CmdSpeakCore.version,
-        subcommands: [Status.self, TestMic.self, TestHotkey.self, TestTranscribe.self, TestIntegration.self, TestOpenAI.self, Reload.self, Run.self, RunLocal.self, RunOpenAI.self],
+        subcommands: [Status.self, Setup.self, TestMic.self, TestHotkey.self, TestTranscribe.self, TestIntegration.self, TestOpenAI.self, Reload.self, Run.self, RunLocal.self, RunOpenAI.self],
         defaultSubcommand: Run.self
     )
 }
@@ -22,6 +22,7 @@ struct Status: ParsableCommand {
 
     func run() throws {
         let config = try ConfigManager.shared.load()
+        let permissions = PermissionsManager.shared.checkPermissions()
 
         print("CmdSpeak v\(CmdSpeakCore.version)")
         print("")
@@ -34,18 +35,135 @@ struct Status: ParsableCommand {
         print("  Feedback: sound=\(config.feedback.soundEnabled)")
         print("")
 
-        let injector = TextInjector()
-        let hasAccessibility = injector.checkAccessibilityPermission()
         print("Permissions:")
-        print("  Accessibility: \(hasAccessibility ? "✓ granted" : "✗ not granted (required)")")
+        print("  Microphone: \(statusIcon(permissions.microphone))")
+        print("  Accessibility: \(statusIcon(permissions.accessibility))")
 
-        if !hasAccessibility {
+        if !permissions.allGranted {
             print("")
-            print("Run 'cmdspeak' to request accessibility permission.")
+            print("Run 'cmdspeak setup' to configure permissions.")
         }
 
         print("")
         print("Config file: ~/.config/cmdspeak/config.toml")
+    }
+
+    private func statusIcon(_ status: PermissionsManager.PermissionStatus) -> String {
+        switch status {
+        case .granted:
+            return "✓ granted"
+        case .denied:
+            return "✗ denied (run 'cmdspeak setup')"
+        case .notDetermined:
+            return "○ not requested yet"
+        }
+    }
+}
+
+struct Setup: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(
+        abstract: "Setup permissions and configure CmdSpeak"
+    )
+
+    func run() async throws {
+        print("CmdSpeak Setup")
+        print("==============")
+        print("")
+
+        let permissions = PermissionsManager.shared
+
+        // Check current state
+        let state = permissions.checkPermissions()
+        if state.allGranted {
+            print("✓ All permissions already granted!")
+            print("")
+            print("You're ready to use CmdSpeak.")
+            print("Run 'cmdspeak' to start dictation.")
+            return
+        }
+
+        print("CmdSpeak needs two permissions to work:")
+        print("")
+        print("1. Microphone - to capture your voice")
+        print("2. Accessibility - to detect hotkey and inject text")
+        print("")
+
+        // Step 1: Microphone
+        if state.microphone != .granted {
+            print("Step 1: Microphone Permission")
+            print("─────────────────────────────")
+
+            if state.microphone == .denied {
+                print("⚠ Microphone access was previously denied.")
+                print("Opening System Settings...")
+                permissions.openMicrophoneSettings()
+                print("")
+                print("Please enable microphone access and run setup again.")
+                return
+            }
+
+            print("Requesting microphone access...")
+            let granted = await permissions.requestMicrophonePermission()
+
+            if granted {
+                print("✓ Microphone permission granted!")
+            } else {
+                print("✗ Microphone permission denied.")
+                print("")
+                print("To grant manually:")
+                print("  System Settings → Privacy & Security → Microphone → Enable Terminal/CmdSpeak")
+                return
+            }
+        } else {
+            print("✓ Microphone: already granted")
+        }
+
+        print("")
+
+        // Step 2: Accessibility
+        if state.accessibility != .granted {
+            print("Step 2: Accessibility Permission")
+            print("────────────────────────────────")
+            print("")
+            print("A system dialog will appear.")
+            print("Click 'Open System Settings' and enable CmdSpeak.")
+            print("")
+            print("Waiting for permission (up to 2 minutes)...")
+
+            permissions.requestAccessibilityPermission()
+
+            let granted = await permissions.waitForAccessibilityPermission(timeout: 120)
+
+            if granted {
+                print("✓ Accessibility permission granted!")
+            } else {
+                print("✗ Accessibility permission not granted.")
+                print("")
+                print("Opening System Settings...")
+                permissions.openAccessibilitySettings()
+                print("")
+                print("To grant manually:")
+                print("  1. Click the lock icon to make changes")
+                print("  2. Enable CmdSpeak in the list")
+                print("  3. Run 'cmdspeak setup' again")
+                return
+            }
+        } else {
+            print("✓ Accessibility: already granted")
+        }
+
+        print("")
+        print("════════════════════════════════")
+        print("✓ Setup complete! All permissions granted.")
+        print("")
+        print("Quick start:")
+        print("  cmdspeak          # Start dictation (local mode)")
+        print("  cmdspeak run-openai   # Use OpenAI (requires API key)")
+        print("")
+        print("Usage: Double-tap Right Option (⌥⌥) to start/stop dictation")
+        print("")
+        print("Tip: Disable macOS Dictation shortcut to avoid conflicts:")
+        print("  System Settings → Keyboard → Dictation → Shortcut → Off")
     }
 }
 
