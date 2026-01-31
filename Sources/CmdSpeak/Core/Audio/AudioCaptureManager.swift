@@ -37,23 +37,28 @@ public final class AudioCaptureManager {
         }
 
         let engine = AVAudioEngine()
+        engine.reset()
+        
         let inputNode = engine.inputNode
-
-        let inputFormat = inputNode.outputFormat(forBus: 0)
-        guard inputFormat.sampleRate > 0 else {
+        
+        let hwFormat = inputNode.inputFormat(forBus: 0)
+        guard hwFormat.sampleRate > 0, hwFormat.channelCount > 0 else {
             throw AudioCaptureError.noInputDevice
         }
 
-        Self.logger.info("Audio input: \(inputFormat.sampleRate)Hz, \(inputFormat.channelCount) channels")
+        Self.logger.info("Audio HW format: \(hwFormat.sampleRate)Hz, \(hwFormat.channelCount) channels")
 
         let callback = onAudioBuffer
         let queue = callbackQueue
-        inputNode.installTap(onBus: 0, bufferSize: bufferSize, format: nil) { [weak self] buffer, _ in
+        
+        inputNode.installTap(onBus: 0, bufferSize: bufferSize, format: hwFormat) { [weak self] buffer, _ in
             guard self != nil else { return }
             queue.async {
                 callback?(buffer)
             }
         }
+
+        engine.prepare()
 
         do {
             try engine.start()
@@ -70,8 +75,9 @@ public final class AudioCaptureManager {
     public func stopRecording() {
         guard isRecording, let engine = audioEngine else { return }
 
-        engine.inputNode.removeTap(onBus: 0)
         engine.stop()
+        engine.inputNode.removeTap(onBus: 0)
+        engine.reset()
         audioEngine = nil
         isRecording = false
         Self.logger.info("Recording stopped")

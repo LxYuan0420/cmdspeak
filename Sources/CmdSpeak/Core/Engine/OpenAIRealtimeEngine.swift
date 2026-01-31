@@ -6,6 +6,11 @@ import os
 public actor OpenAIRealtimeEngine: TranscriptionEngine {
     private static let logger = Logger(subsystem: "com.cmdspeak", category: "openai-realtime")
 
+    private static let hallucinationPatterns: [String] = [
+        "transcribe in any language",
+        "including mixed language content"
+    ]
+
     public private(set) var isReady: Bool = false
 
     private var webSocket: URLSessionWebSocketTask?
@@ -363,8 +368,15 @@ public actor OpenAIRealtimeEngine: TranscriptionEngine {
 
         case .transcriptionDelta:
             if let deltaMessage = try? Self.jsonDecoder.decode(TranscriptionDelta.self, from: data) {
-                accumulatedText += deltaMessage.delta
-                partialTranscriptionHandler?(deltaMessage.delta)
+                let delta = deltaMessage.delta
+                let lowerDelta = delta.lowercased()
+                let isHallucination = Self.hallucinationPatterns.contains { lowerDelta.contains($0) }
+                if !isHallucination {
+                    accumulatedText += delta
+                    partialTranscriptionHandler?(delta)
+                } else {
+                    Self.logger.debug("Filtered hallucinated text: \(delta)")
+                }
             }
 
         case .transcriptionCompleted:
