@@ -39,8 +39,9 @@ public final class AudioCaptureManager {
         let engine = AVAudioEngine()
         let inputNode = engine.inputNode
 
-        let inputFormat = inputNode.outputFormat(forBus: 0)
-        guard inputFormat.sampleRate > 0 else {
+        // Get the native format - we'll use nil for the tap to let AVAudioEngine handle conversion
+        let inputFormat = inputNode.inputFormat(forBus: 0)
+        guard inputFormat.sampleRate > 0, inputFormat.channelCount > 0 else {
             throw AudioCaptureError.noInputDevice
         }
 
@@ -48,7 +49,10 @@ public final class AudioCaptureManager {
 
         let callback = onAudioBuffer
         let queue = callbackQueue
-        inputNode.installTap(onBus: 0, bufferSize: bufferSize, format: inputFormat) { [weak self] buffer, _ in
+
+        // Use nil format to let AVAudioEngine provide buffers in the native hardware format
+        // This avoids format mismatch errors (-10868)
+        inputNode.installTap(onBus: 0, bufferSize: bufferSize, format: nil) { [weak self] buffer, _ in
             guard self != nil else { return }
             queue.async {
                 callback?(buffer)
