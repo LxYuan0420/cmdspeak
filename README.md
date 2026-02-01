@@ -4,7 +4,7 @@
 [![macOS 14+](https://img.shields.io/badge/macOS-14%2B-blue.svg)](https://developer.apple.com/macos/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-Drop-in replacement for macOS Dictation. Double-tap ⌥⌥, speak, text appears at cursor.
+Drop-in replacement for macOS Dictation. Double-tap Right Option, speak, text appears at cursor.
 
 ## Installation
 
@@ -26,67 +26,51 @@ make install  # Installs to /usr/local/bin
 ## Quick Start
 
 ```bash
-# Local mode (on-device, private, no API key needed)
-cmdspeak run
-
-# OpenAI mode (streaming, requires API key)
 export OPENAI_API_KEY=your-key
-cmdspeak run-openai
+cmdspeak
 ```
 
-**Usage:** Double-tap Right Option (⌥⌥) to start → speak → ⌥⌥ to stop (or wait for silence auto-inject)
-
-## Modes
-
-| Mode | Command | Model | Notes |
-|------|---------|-------|-------|
-| **Local** (default) | `run` or `run-local` | WhisperKit large-v3-turbo | On-device, private, ~1GB download |
-| **OpenAI Realtime** | `run-openai` | gpt-4o-transcribe | Streaming, multilingual, requires API key |
-
-The default `run` command auto-selects mode based on your config file.
+**Usage:** Double-tap Right Option to start, speak, double-tap again to stop (or wait for silence auto-inject)
 
 ## Features
 
-- **Double-tap Right Option (⌥⌥)** to start/stop dictation
+- **Double-tap Right Option** to start/stop dictation
+- **Streaming transcription** with OpenAI gpt-4o-transcribe
 - **Text injection** at cursor via Accessibility API
-- **Streaming transcription** — see words appear in real-time
-- **Multi-language support** — auto-detects 99+ languages per utterance
+- **Multi-language support** — auto-detects 99+ languages
 - **Voice Activity Detection** — auto-stops after silence
 - **Menu bar app** for background operation with visual feedback
-- **Progress UI** showing model download and loading status
 - **Audio feedback** sounds on start/stop
 
 ## Requirements
 
-- macOS 14+ (Sonoma), Apple Silicon recommended
+- macOS 14+ (Sonoma)
+- OpenAI API key
 - Permissions: Microphone, Accessibility
-- For OpenAI mode: API key
 - Disable macOS Dictation: System Settings → Keyboard → Dictation → Shortcut → Off
 
 ## Menu Bar App
 
-For background operation, build and run the menu bar app:
+For background operation:
 
 ```bash
 swift build -c release
 .build/release/CmdSpeakApp
 ```
 
-The menu bar app shows:
+The menu bar shows:
 - **Status indicator** — color-coded (green=ready, blue=listening, purple=processing)
 - **Live transcription** — see text as you speak
-- **Download progress** — model download and ANE compilation status
 
 ## Commands
 
 ```bash
-cmdspeak run            # Run with mode from config (local or openai-realtime)
-cmdspeak run-local      # Force local WhisperKit mode
-cmdspeak run-openai     # Force OpenAI streaming mode
-cmdspeak setup          # Setup permissions (guided onboarding)
-cmdspeak status         # Show current config and permissions
-cmdspeak test-mic       # Test microphone
-cmdspeak test-hotkey    # Test ⌥⌥ detection
+cmdspeak             # Run dictation
+cmdspeak setup       # Setup permissions (guided onboarding)
+cmdspeak status      # Show current config and permissions
+cmdspeak test-mic    # Test microphone
+cmdspeak test-hotkey # Test double-tap detection
+cmdspeak test-openai # Test OpenAI API connection
 ```
 
 ## Configuration
@@ -95,17 +79,16 @@ cmdspeak test-hotkey    # Test ⌥⌥ detection
 
 ```toml
 [model]
-type = "local"                              # "local" or "openai-realtime"
-name = "openai_whisper-large-v3_turbo"      # Model name
-# language = "en"                           # Optional: force language (omit for auto-detect)
-# translate_to_english = false              # Optional: translate all speech to English
+name = "gpt-4o-transcribe"
+# api_key = "env:OPENAI_API_KEY"  # Or set OPENAI_API_KEY env var
+# language = "en"                  # Optional: force language (omit for auto-detect)
 
 [hotkey]
 trigger = "double-tap-right-option"
 interval_ms = 300
 
 [audio]
-sample_rate = 16000
+sample_rate = 24000
 silence_threshold_ms = 10000
 
 [feedback]
@@ -113,67 +96,23 @@ sound_enabled = true
 menu_bar_icon = true
 ```
 
-### OpenAI mode config
-
-```toml
-[model]
-type = "openai-realtime"
-name = "gpt-4o-transcribe"
-api_key = "env:OPENAI_API_KEY"    # Or set OPENAI_API_KEY env var
-```
-
-## First Run
-
-On first run with local mode:
-1. **Model download** (~954MB for large-v3-turbo)
-2. **ANE compilation** (2-4 minutes on first run, cached after)
-
-Progress is shown in CLI and menu bar.
-
-## Architecture
-
-```
-User → ⌥⌥ Hotkey → Audio Capture → Transcription Engine → Text Injection
-                                          ↓
-                           WhisperKit (local) or OpenAI (streaming)
-```
-
 ## Troubleshooting
 
 ### First-time setup
-Run `cmdspeak setup` for guided permission configuration. This will:
-1. Request microphone permission (system dialog)
-2. Request accessibility permission (opens System Settings)
-3. Wait for you to grant permissions
-4. Confirm everything is working
+Run `cmdspeak setup` for guided permission configuration.
 
 ### Hotkey not working
 - Run `cmdspeak setup` to check and fix permissions
-- Ensure Accessibility permission is granted: System Settings → Privacy & Security → Accessibility → Enable CmdSpeak
+- Ensure Accessibility permission is granted: System Settings → Privacy & Security → Accessibility
 - Disable macOS Dictation shortcut: System Settings → Keyboard → Dictation → Shortcut → Off
 
 ### No audio captured
 - Run `cmdspeak setup` to check microphone permission
-- Grant Microphone permission: System Settings → Privacy & Security → Microphone → Enable CmdSpeak
-- Check audio input device: System Settings → Sound → Input
+- Grant Microphone permission: System Settings → Privacy & Security → Microphone
 
-### Model loading slow on first run
-- ANE compilation takes 2-4 minutes on first run (cached after)
-- Progress is shown in CLI and menu bar
-
-## Roadmap
-
-- [x] OpenAI Realtime streaming
-- [x] WhisperKit local transcription  
-- [x] Menu bar app with visual feedback
-- [x] Model download progress UI
-- [x] Unified mode selection
-- [x] Streaming transcription for local mode
-- [x] Homebrew distribution
-- [x] Voice Activity Detection (VAD)
-- [x] System permissions onboarding flow
-- [ ] DMG installer
-- [ ] Code signing for Gatekeeper
+### API key not found
+- Set `OPENAI_API_KEY` environment variable, or
+- Add `api_key = "your-key"` to config.toml
 
 ## Contributing
 

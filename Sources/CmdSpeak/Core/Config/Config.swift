@@ -24,37 +24,24 @@ public struct Config: Codable, Sendable {
 }
 
 public struct ModelConfig: Codable, Sendable {
-    /// Default local model: large-v3_turbo for best quality/speed balance
-    public static let defaultLocalModel = "openai_whisper-large-v3_turbo"
-
-    public var type: String
     public var name: String
-    public var provider: String?
     public var apiKey: String?
     public var language: String?
-    public var translateToEnglish: Bool
 
     public init(
-        type: String = "local",
-        name: String = ModelConfig.defaultLocalModel,
-        provider: String? = nil,
+        name: String = "gpt-4o-transcribe",
         apiKey: String? = nil,
-        language: String? = nil,
-        translateToEnglish: Bool = false
+        language: String? = nil
     ) {
-        self.type = type
         self.name = name
-        self.provider = provider
         self.apiKey = apiKey
         self.language = language
-        self.translateToEnglish = translateToEnglish
     }
 
     enum CodingKeys: String, CodingKey {
-        case type, name, provider
+        case name
         case apiKey = "api_key"
         case language
-        case translateToEnglish = "translate_to_english"
     }
 }
 
@@ -77,7 +64,7 @@ public struct AudioConfig: Codable, Sendable {
     public var sampleRate: Int
     public var silenceThresholdMs: Int
 
-    public init(sampleRate: Int = 16000, silenceThresholdMs: Int = 10000) {
+    public init(sampleRate: Int = 24000, silenceThresholdMs: Int = 10000) {
         self.sampleRate = sampleRate
         self.silenceThresholdMs = silenceThresholdMs
     }
@@ -149,16 +136,11 @@ public final class ConfigManager {
         var config = Config.default
 
         if let modelValue = table["model"], let model = modelValue.table {
-            if let type = model["type"]?.string { config.model.type = type }
             if let name = model["name"]?.string { config.model.name = name }
-            if let provider = model["provider"]?.string { config.model.provider = provider }
             if let apiKey = model["api_key"]?.string {
                 config.model.apiKey = resolveEnvValue(apiKey)
             }
             if let language = model["language"]?.string { config.model.language = language }
-            if let translate = model["translate_to_english"]?.bool {
-                config.model.translateToEnglish = translate
-            }
         }
 
         if let hotkeyValue = table["hotkey"], let hotkey = hotkeyValue.table {
@@ -184,17 +166,13 @@ public final class ConfigManager {
     private func generateTOML(from config: Config) -> String {
         var toml = """
         [model]
-        type = "\(config.model.type)"
         name = "\(config.model.name)"
-        # language = "en"  # Optional: force language (omit for auto-detect, supports 99+ languages)
-        # translate_to_english = false  # Optional: translate all speech to English
+        # api_key = "env:OPENAI_API_KEY"  # Or set OPENAI_API_KEY environment variable
+        # language = "en"  # Optional: force language (omit for auto-detect)
         """
 
         if let language = config.model.language {
             toml += "\nlanguage = \"\(language)\""
-        }
-        if config.model.translateToEnglish {
-            toml += "\ntranslate_to_english = true"
         }
 
         toml += """

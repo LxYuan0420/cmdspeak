@@ -8,11 +8,10 @@ struct ConfigTests {
     func testDefaultConfig() {
         let config = Config.default
 
-        #expect(config.model.type == "local")
-        #expect(config.model.name == ModelConfig.defaultLocalModel)
+        #expect(config.model.name == "gpt-4o-transcribe")
         #expect(config.hotkey.trigger == "double-tap-right-option")
         #expect(config.hotkey.intervalMs == 300)
-        #expect(config.audio.sampleRate == 16000)
+        #expect(config.audio.sampleRate == 24000)
         #expect(config.audio.silenceThresholdMs == 10000)
         #expect(config.feedback.soundEnabled == true)
         #expect(config.feedback.menuBarIcon == true)
@@ -20,11 +19,10 @@ struct ConfigTests {
 
     @Test("Model config stores values correctly")
     func testModelConfig() {
-        let model = ModelConfig(type: "api", name: "gpt-4o-transcribe", provider: "openai")
+        let model = ModelConfig(name: "gpt-4o-transcribe", apiKey: "test-key")
 
-        #expect(model.type == "api")
         #expect(model.name == "gpt-4o-transcribe")
-        #expect(model.provider == "openai")
+        #expect(model.apiKey == "test-key")
     }
 
     @Test("Hotkey config is Codable")
@@ -41,16 +39,13 @@ struct ConfigTests {
         #expect(decoded.intervalMs == 200)
     }
 
-    @Test("Translation config is preserved")
-    func testTranslationConfig() {
+    @Test("Language config is preserved")
+    func testLanguageConfig() {
         let model = ModelConfig(
-            type: "local",
-            name: "whisper-base",
-            language: "zh",
-            translateToEnglish: true
+            name: "gpt-4o-transcribe",
+            language: "zh"
         )
 
         #expect(model.language == "zh")
-        #expect(model.translateToEnglish == true)
     }
 }

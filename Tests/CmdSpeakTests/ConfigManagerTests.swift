@@ -7,9 +7,7 @@ struct ConfigManagerTests {
     @Test("Environment variable resolution")
     func testEnvVarResolution() {
         let config = ModelConfig(
-            type: "api",
             name: "gpt-4o-transcribe",
-            provider: "openai",
             apiKey: "env:TEST_API_KEY"
         )
 
@@ -20,15 +18,13 @@ struct ConfigManagerTests {
     func testDefaultConfigValues() {
         let config = Config.default
 
-        #expect(config.model.type == "local")
-        #expect(config.model.name == ModelConfig.defaultLocalModel)
-        #expect(config.model.translateToEnglish == false)
+        #expect(config.model.name == "gpt-4o-transcribe")
         #expect(config.model.language == nil)
 
         #expect(config.hotkey.trigger == "double-tap-right-option")
         #expect(config.hotkey.intervalMs == 300)
 
-        #expect(config.audio.sampleRate == 16000)
+        #expect(config.audio.sampleRate == 24000)
         #expect(config.audio.silenceThresholdMs == 10000)
 
         #expect(config.feedback.soundEnabled == true)

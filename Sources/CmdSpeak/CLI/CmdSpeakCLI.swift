@@ -10,7 +10,7 @@ struct CmdSpeakCLI: AsyncParsableCommand {
         commandName: "cmdspeak",
         abstract: "Drop-in replacement for macOS Dictation",
         version: CmdSpeakCore.version,
-        subcommands: [Status.self, Setup.self, TestMic.self, TestHotkey.self, TestTranscribe.self, TestIntegration.self, TestOpenAI.self, Reload.self, Run.self, RunLocal.self, RunOpenAI.self],
+        subcommands: [Status.self, Setup.self, TestMic.self, TestHotkey.self, TestOpenAI.self, Reload.self, Run.self],
         defaultSubcommand: Run.self
     )
 }
@@ -27,10 +27,9 @@ struct Status: ParsableCommand {
         print("CmdSpeak v\(CmdSpeakCore.version)")
         print("")
         print("Configuration:")
-        print("  Model: \(config.model.name) (\(config.model.type))")
+        print("  Model: gpt-4o-transcribe (OpenAI Realtime API)")
         let langStr = config.model.language ?? "auto-detect"
-        let translateStr = config.model.translateToEnglish ? " → English" : ""
-        print("  Language: \(langStr)\(translateStr)")
+        print("  Language: \(langStr)")
         print("  Hotkey: \(config.hotkey.trigger) (\(config.hotkey.intervalMs)ms interval)")
         print("  Feedback: sound=\(config.feedback.soundEnabled)")
         print("")
@@ -51,11 +50,11 @@ struct Status: ParsableCommand {
     private func statusIcon(_ status: PermissionsManager.PermissionStatus) -> String {
         switch status {
         case .granted:
-            return "✓ granted"
+            return "granted"
         case .denied:
-            return "✗ denied (run 'cmdspeak setup')"
+            return "denied (run 'cmdspeak setup')"
         case .notDetermined:
-            return "○ not requested yet"
+            return "not requested yet"
         }
     }
 }
@@ -72,10 +71,9 @@ struct Setup: AsyncParsableCommand {
 
         let permissions = PermissionsManager.shared
 
-        // Check current state
         let state = permissions.checkPermissions()
         if state.allGranted {
-            print("✓ All permissions already granted!")
+            print("All permissions already granted!")
             print("")
             print("You're ready to use CmdSpeak.")
             print("Run 'cmdspeak' to start dictation.")
@@ -88,17 +86,17 @@ struct Setup: AsyncParsableCommand {
         print("2. Accessibility - to detect hotkey and inject text")
         print("")
 
-        // Step 1: Microphone
         if state.microphone != .granted {
             print("Step 1: Microphone Permission")
-            print("─────────────────────────────")
+            print("------------------------------")
 
             if state.microphone == .denied {
-                print("⚠ Microphone access was previously denied.")
+                print("Microphone access was previously denied.")
                 print("Opening System Settings...")
                 permissions.openMicrophoneSettings()
                 print("")
-                print("Please enable microphone access and run setup again.")
+                print("Please grant microphone access in System Settings,")
+                print("then run 'cmdspeak setup' again.")
                 return
             }
 
@@ -106,247 +104,129 @@ struct Setup: AsyncParsableCommand {
             let granted = await permissions.requestMicrophonePermission()
 
             if granted {
-                print("✓ Microphone permission granted!")
+                print("Microphone access granted!")
             } else {
-                print("✗ Microphone permission denied.")
-                print("")
-                print("To grant manually:")
-                print("  System Settings → Privacy & Security → Microphone → Enable Terminal/CmdSpeak")
+                print("Microphone access denied.")
+                print("Please grant access in System Settings > Privacy > Microphone")
                 return
             }
         } else {
-            print("✓ Microphone: already granted")
+            print("Step 1: Microphone - already granted")
         }
 
         print("")
 
-        // Step 2: Accessibility
         if state.accessibility != .granted {
             print("Step 2: Accessibility Permission")
-            print("────────────────────────────────")
+            print("---------------------------------")
             print("")
-            print("A system dialog will appear.")
-            print("Click 'Open System Settings' and enable CmdSpeak.")
+            print("CmdSpeak needs Accessibility permission to:")
+            print("  - Detect the Option key double-tap")
+            print("  - Inject transcribed text at the cursor")
             print("")
-            print("Waiting for permission (up to 2 minutes)...")
-
-            permissions.requestAccessibilityPermission()
-
-            let granted = await permissions.waitForAccessibilityPermission(timeout: 120)
-
-            if granted {
-                print("✓ Accessibility permission granted!")
-            } else {
-                print("✗ Accessibility permission not granted.")
-                print("")
-                print("Opening System Settings...")
-                permissions.openAccessibilitySettings()
-                print("")
-                print("To grant manually:")
-                print("  1. Click the lock icon to make changes")
-                print("  2. Enable CmdSpeak in the list")
-                print("  3. Run 'cmdspeak setup' again")
-                return
-            }
+            print("Opening System Settings...")
+            permissions.openAccessibilitySettings()
+            print("")
+            print("Please add CmdSpeak to the list of allowed apps,")
+            print("then run 'cmdspeak setup' again to verify.")
         } else {
-            print("✓ Accessibility: already granted")
+            print("Step 2: Accessibility - already granted")
+            print("")
+            print("Setup complete! Run 'cmdspeak' to start dictation.")
         }
-
-        print("")
-        print("════════════════════════════════")
-        print("✓ Setup complete! All permissions granted.")
-        print("")
-        print("Quick start:")
-        print("  cmdspeak          # Start dictation (local mode)")
-        print("  cmdspeak run-openai   # Use OpenAI (requires API key)")
-        print("")
-        print("Usage: Double-tap Right Option (⌥⌥) to start/stop dictation")
-        print("")
-        print("Tip: Disable macOS Dictation shortcut to avoid conflicts:")
-        print("  System Settings → Keyboard → Dictation → Shortcut → Off")
     }
 }
 
-final class MicTestDelegate: NSObject, AVCaptureAudioDataOutputSampleBufferDelegate {
-    var bufferCount = 0
-    var maxLevel: Float = 0
-    let lock = NSLock()
+struct TestMic: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(
+        commandName: "test-mic",
+        abstract: "Test microphone access"
+    )
+
+    @Option(name: .shortAndLong, help: "Duration in seconds")
+    var duration: Int = 3
+
+    func run() async throws {
+        print("Testing microphone...")
+
+        let granted = await withCheckedContinuation { continuation in
+            AVCaptureDevice.requestAccess(for: .audio) { granted in
+                continuation.resume(returning: granted)
+            }
+        }
+
+        guard granted else {
+            print("Microphone permission denied")
+            return
+        }
+        print("Microphone permission granted")
+
+        guard let device = AVCaptureDevice.default(for: .audio) else {
+            print("No audio input device found")
+            return
+        }
+        print("Device: \(device.localizedName)")
+
+        let session = AVCaptureSession()
+        session.sessionPreset = .high
+
+        do {
+            let input = try AVCaptureDeviceInput(device: device)
+            session.addInput(input)
+
+            let output = AVCaptureAudioDataOutput()
+            let delegate = SimpleAudioDelegate()
+            let queue = DispatchQueue(label: "test-mic", qos: .userInteractive)
+            output.setSampleBufferDelegate(delegate, queue: queue)
+            session.addOutput(output)
+
+            session.startRunning()
+            print("Recording for \(duration) seconds...")
+
+            try await Task.sleep(nanoseconds: UInt64(duration) * 1_000_000_000)
+
+            session.stopRunning()
+
+            let samples = delegate.sampleCount
+            print("")
+            print("Captured \(samples) audio samples")
+
+            if samples > 0 {
+                print("Microphone test PASSED")
+            } else {
+                print("Microphone test FAILED: No samples captured")
+            }
+        } catch {
+            print("Failed to setup capture: \(error.localizedDescription)")
+        }
+    }
+}
+
+final class SimpleAudioDelegate: NSObject, AVCaptureAudioDataOutputSampleBufferDelegate {
+    var sampleCount = 0
 
     func captureOutput(
         _ output: AVCaptureOutput,
         didOutput sampleBuffer: CMSampleBuffer,
         from connection: AVCaptureConnection
     ) {
-        lock.lock()
-        bufferCount += 1
-        let currentCount = bufferCount
-        lock.unlock()
-
-        guard let formatDesc = CMSampleBufferGetFormatDescription(sampleBuffer),
-              let asbd = CMAudioFormatDescriptionGetStreamBasicDescription(formatDesc) else {
-            return
-        }
-
-        let bitsPerChannel = asbd.pointee.mBitsPerChannel
-        let formatFlags = asbd.pointee.mFormatFlags
-        let isFloat = (formatFlags & kAudioFormatFlagIsFloat) != 0
-        let isSignedInt = (formatFlags & kAudioFormatFlagIsSignedInteger) != 0
-
-        guard let blockBuffer = CMSampleBufferGetDataBuffer(sampleBuffer) else { return }
-
-        var length = 0
-        var dataPointer: UnsafeMutablePointer<Int8>?
-        CMBlockBufferGetDataPointer(blockBuffer, atOffset: 0, lengthAtOffsetOut: nil, totalLengthOut: &length, dataPointerOut: &dataPointer)
-
-        guard let data = dataPointer, length > 0 else { return }
-
-        var avg: Float = 0
-
-        if isFloat && bitsPerChannel == 32 {
-            let floatCount = length / MemoryLayout<Float>.size
-            guard floatCount > 0 else { return }
-            var sum: Float = 0
-            let floats = UnsafeRawPointer(data).bindMemory(to: Float.self, capacity: floatCount)
-            for i in 0..<floatCount {
-                sum += abs(floats[i])
-            }
-            avg = sum / Float(floatCount)
-        } else if isSignedInt && bitsPerChannel == 16 {
-            let sampleCount = length / MemoryLayout<Int16>.size
-            guard sampleCount > 0 else { return }
-            var sum: Float = 0
-            let samples = UnsafeRawPointer(data).bindMemory(to: Int16.self, capacity: sampleCount)
-            for i in 0..<sampleCount {
-                sum += abs(Float(samples[i]) / Float(Int16.max))
-            }
-            avg = sum / Float(sampleCount)
-        } else if isSignedInt && bitsPerChannel == 32 {
-            let sampleCount = length / MemoryLayout<Int32>.size
-            guard sampleCount > 0 else { return }
-            var sum: Float = 0
-            let samples = UnsafeRawPointer(data).bindMemory(to: Int32.self, capacity: sampleCount)
-            for i in 0..<sampleCount {
-                sum += abs(Float(samples[i]) / Float(Int32.max))
-            }
-            avg = sum / Float(sampleCount)
-        } else {
-            return
-        }
-
-        lock.lock()
-        if avg > maxLevel {
-            maxLevel = avg
-        }
-        lock.unlock()
-
-        let bars = Int(avg * 100)
-        let barString = String(repeating: "|", count: min(bars, 50))
-        print("\r[\(currentCount)] \(barString.padding(toLength: 50, withPad: " ", startingAt: 0))", terminator: "")
-        fflush(stdout)
-    }
-}
-
-struct TestMic: ParsableCommand {
-    static let configuration = CommandConfiguration(
-        commandName: "test-mic",
-        abstract: "Test microphone input"
-    )
-
-    @Option(name: .shortAndLong, help: "Duration in seconds")
-    var duration: Int = 3
-
-    func run() throws {
-        print("Testing microphone for \(duration) seconds...")
-
-        let semaphore = DispatchSemaphore(value: 0)
-        var permissionGranted = false
-
-        AVCaptureDevice.requestAccess(for: .audio) { granted in
-            permissionGranted = granted
-            semaphore.signal()
-        }
-        semaphore.wait()
-
-        guard permissionGranted else {
-            print("✗ Microphone permission denied")
-            print("Grant permission: System Settings > Privacy & Security > Microphone > Terminal")
-            return
-        }
-
-        print("✓ Microphone permission granted")
-
-        guard let device = AVCaptureDevice.default(for: .audio) else {
-            print("✗ No audio device found")
-            return
-        }
-
-        print("Device: \(device.localizedName)")
-        print("Speak now...")
-        print("")
-
-        let session = AVCaptureSession()
-        session.sessionPreset = .high
-
-        let input = try AVCaptureDeviceInput(device: device)
-        guard session.canAddInput(input) else {
-            print("✗ Cannot add audio input")
-            return
-        }
-        session.addInput(input)
-
-        let output = AVCaptureAudioDataOutput()
-        let delegate = MicTestDelegate()
-        let queue = DispatchQueue(label: "mic-test", qos: .userInteractive)
-        output.setSampleBufferDelegate(delegate, queue: queue)
-
-        guard session.canAddOutput(output) else {
-            print("✗ Cannot add audio output")
-            return
-        }
-        session.addOutput(output)
-
-        session.startRunning()
-
-        Thread.sleep(forTimeInterval: Double(duration))
-
-        session.stopRunning()
-
-        delegate.lock.lock()
-        let finalCount = delegate.bufferCount
-        let finalLevel = delegate.maxLevel
-        delegate.lock.unlock()
-
-        print("")
-        print("")
-        print("Test complete.")
-        print("Buffers received: \(finalCount)")
-        print("Max level: \(String(format: "%.4f", finalLevel))")
-
-        if finalCount == 0 {
-            print("No audio buffers received.")
-            print("Ensure Terminal has microphone permission: System Settings > Privacy & Security > Microphone")
-        } else if finalLevel < 0.001 {
-            print("Very low audio level. Check microphone connection.")
-        } else if finalLevel < 0.01 {
-            print("Audio level is low but detectable.")
-        } else {
-            print("Audio level looks good.")
-        }
+        sampleCount += CMSampleBufferGetNumSamples(sampleBuffer)
     }
 }
 
 struct TestHotkey: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "test-hotkey",
-        abstract: "Test hotkey detection (double-tap Right Option)"
+        abstract: "Test double-tap Right Option hotkey"
     )
 
-    @Option(name: .shortAndLong, help: "Timeout in seconds")
-    var timeout: Int = 10
+    @Option(name: .shortAndLong, help: "How long to listen for hotkey (seconds)")
+    var duration: Int = 10
 
     func run() throws {
         print("Testing hotkey detection...")
-        print("Double-tap Right Option key within \(timeout) seconds.")
+        print("")
+        print("Double-tap Right Option key within \(duration) seconds")
         print("")
 
         let config = try ConfigManager.shared.load()
@@ -359,22 +239,21 @@ struct TestHotkey: ParsableCommand {
 
         hotkeyManager.onHotkeyTriggered = {
             triggerCount += 1
+            print("Hotkey triggered! (count: \(triggerCount))")
             triggered = true
-            print("✓ Hotkey triggered! (count: \(triggerCount))")
         }
 
         do {
             try hotkeyManager.start()
         } catch {
-            print("✗ Failed to start hotkey manager: \(error.localizedDescription)")
+            print("Failed to start hotkey manager: \(error.localizedDescription)")
             return
         }
 
-        print("Hotkey manager started. Listening...")
+        print("Listening for double-tap Right Option...")
         print("")
 
-        let deadline = Date().addingTimeInterval(TimeInterval(timeout))
-
+        let deadline = Date().addingTimeInterval(TimeInterval(duration))
         while Date() < deadline {
             RunLoop.current.run(until: Date().addingTimeInterval(0.1))
             if triggered {
@@ -386,349 +265,12 @@ struct TestHotkey: ParsableCommand {
         print("")
 
         if triggerCount > 0 {
-            print("✓ Test PASSED: Hotkey triggered \(triggerCount) time(s)")
+            print("Test PASSED: Hotkey triggered \(triggerCount) time(s)")
         } else {
-            print("✗ Test FAILED: No hotkey detected")
+            print("Test FAILED: No hotkey detected")
             print("  Check: Is Right Option key working?")
             print("  Check: Is accessibility permission granted?")
         }
-    }
-}
-
-struct TestTranscribe: AsyncParsableCommand {
-    static let configuration = CommandConfiguration(
-        commandName: "test-transcribe",
-        abstract: "Test model loading and transcription with mic input"
-    )
-
-    @Option(name: .shortAndLong, help: "Recording duration in seconds")
-    var duration: Int = 3
-
-    func run() async throws {
-        print("Testing transcription pipeline...")
-
-        let config = try ConfigManager.shared.load()
-        print("Loading model: \(config.model.name)")
-
-        let engine = WhisperKitEngine(
-            modelName: config.model.name,
-            language: config.model.language,
-            translateToEnglish: config.model.translateToEnglish
-        )
-
-        let startLoad = Date()
-        try await engine.initialize()
-        let loadTime = Date().timeIntervalSince(startLoad)
-        print("✓ Model loaded in \(String(format: "%.1f", loadTime))s")
-
-        print("")
-        print("Recording for \(duration) seconds...")
-        print("Speak now!")
-
-        let permissionGranted = await withCheckedContinuation { continuation in
-            AVCaptureDevice.requestAccess(for: .audio) { granted in
-                continuation.resume(returning: granted)
-            }
-        }
-
-        guard permissionGranted else {
-            print("✗ Microphone permission denied")
-            return
-        }
-
-        guard let device = AVCaptureDevice.default(for: .audio) else {
-            print("✗ No audio device")
-            return
-        }
-
-        let session = AVCaptureSession()
-        session.sessionPreset = .high
-        let input = try AVCaptureDeviceInput(device: device)
-        session.addInput(input)
-
-        let output = AVCaptureAudioDataOutput()
-        let delegate = AudioCollector()
-        let queue = DispatchQueue(label: "test-transcribe", qos: .userInteractive)
-        output.setSampleBufferDelegate(delegate, queue: queue)
-        session.addOutput(output)
-
-        session.startRunning()
-        try await Task.sleep(nanoseconds: UInt64(duration) * 1_000_000_000)
-        session.stopRunning()
-
-        let samples = delegate.getSamples()
-
-        let durationSec = Double(samples.count) / 16000.0
-        print("")
-        print("Captured \(samples.count) samples (\(String(format: "%.1f", durationSec))s)")
-
-        guard samples.count > 1600 else {
-            print("✗ Too short, need > 0.1s of audio")
-            return
-        }
-
-        print("Transcribing...")
-        let result = try await engine.transcribe(audioSamples: samples)
-
-        print("")
-        print("═══════════════════════════════════════")
-        print("Result: \"\(result.text)\"")
-        print("Time: \(String(format: "%.2f", result.duration))s")
-        if let lang = result.language {
-            print("Language: \(lang)")
-        }
-        print("═══════════════════════════════════════")
-    }
-}
-
-final class AudioCollector: NSObject, AVCaptureAudioDataOutputSampleBufferDelegate {
-    private var samples: [Float] = []
-    private let lock = NSLock()
-
-    func getSamples() -> [Float] {
-        lock.lock()
-        defer { lock.unlock() }
-        return samples
-    }
-
-    func getCount() -> Int {
-        lock.lock()
-        defer { lock.unlock() }
-        return samples.count
-    }
-
-    func captureOutput(
-        _ output: AVCaptureOutput,
-        didOutput sampleBuffer: CMSampleBuffer,
-        from connection: AVCaptureConnection
-    ) {
-        guard let formatDesc = CMSampleBufferGetFormatDescription(sampleBuffer),
-              let asbd = CMAudioFormatDescriptionGetStreamBasicDescription(formatDesc) else { return }
-
-        let sampleRate = asbd.pointee.mSampleRate
-        let channels = asbd.pointee.mChannelsPerFrame
-        let bitsPerChannel = asbd.pointee.mBitsPerChannel
-        let formatFlags = asbd.pointee.mFormatFlags
-
-        let frameCount = CMSampleBufferGetNumSamples(sampleBuffer)
-        guard frameCount > 0 else { return }
-
-        guard let blockBuffer = CMSampleBufferGetDataBuffer(sampleBuffer) else { return }
-
-        var length = 0
-        var dataPointer: UnsafeMutablePointer<Int8>?
-        CMBlockBufferGetDataPointer(blockBuffer, atOffset: 0, lengthAtOffsetOut: nil, totalLengthOut: &length, dataPointerOut: &dataPointer)
-        guard let data = dataPointer, length > 0 else { return }
-
-        let isFloat = (formatFlags & kAudioFormatFlagIsFloat) != 0
-        let isSignedInt = (formatFlags & kAudioFormatFlagIsSignedInteger) != 0
-
-        var floatSamples: [Float] = []
-        if isFloat && bitsPerChannel == 32 {
-            let floatCount = length / MemoryLayout<Float>.size
-            let floats = UnsafeRawPointer(data).bindMemory(to: Float.self, capacity: floatCount)
-            for i in 0..<floatCount {
-                floatSamples.append(floats[i])
-            }
-        } else if isSignedInt && bitsPerChannel == 16 {
-            let count = length / MemoryLayout<Int16>.size
-            let int16s = UnsafeRawPointer(data).bindMemory(to: Int16.self, capacity: count)
-            for i in 0..<count {
-                floatSamples.append(Float(int16s[i]) / Float(Int16.max))
-            }
-        } else if isSignedInt && bitsPerChannel == 32 {
-            let count = length / MemoryLayout<Int32>.size
-            let int32s = UnsafeRawPointer(data).bindMemory(to: Int32.self, capacity: count)
-            for i in 0..<count {
-                floatSamples.append(Float(int32s[i]) / Float(Int32.max))
-            }
-        }
-
-        let targetRate = 16000.0
-        if sampleRate != targetRate && sampleRate > 0 {
-            let ratio = sampleRate / targetRate
-            var resampled: [Float] = []
-            let outputLen = Int(Double(floatSamples.count) / ratio / Double(channels))
-            for i in 0..<outputLen {
-                let srcIdx = Int(Double(i) * ratio) * Int(channels)
-                if srcIdx < floatSamples.count {
-                    resampled.append(floatSamples[srcIdx])
-                }
-            }
-            floatSamples = resampled
-        } else if channels > 1 {
-            var mono: [Float] = []
-            for i in stride(from: 0, to: floatSamples.count, by: Int(channels)) {
-                mono.append(floatSamples[i])
-            }
-            floatSamples = mono
-        }
-
-        lock.lock()
-        samples.append(contentsOf: floatSamples)
-        lock.unlock()
-    }
-}
-
-struct TestIntegration: ParsableCommand {
-    static let configuration = CommandConfiguration(
-        commandName: "test-integration",
-        abstract: "Test full pipeline: hotkey → audio → transcription (no run loop)"
-    )
-
-    func run() throws {
-        print("═══════════════════════════════════════")
-        print("Integration Test: Hotkey → Audio → Transcription")
-        print("═══════════════════════════════════════")
-        print("")
-
-        let config = try ConfigManager.shared.load()
-        var hotkeyTriggered = false
-        var audioSamples: [Float] = []
-
-        let hotkeyManager = HotkeyManager(
-            doubleTapInterval: TimeInterval(config.hotkey.intervalMs) / 1000.0
-        )
-
-        hotkeyManager.onHotkeyTriggered = {
-            print("[Test] Hotkey triggered!")
-            hotkeyTriggered = true
-        }
-
-        do {
-            try hotkeyManager.start()
-        } catch {
-            print("✗ Failed to start hotkey: \(error)")
-            return
-        }
-        print("✓ Hotkey manager started")
-
-        print("")
-        print("Step 1: Double-tap Right Option to trigger hotkey...")
-
-        let deadline1 = Date().addingTimeInterval(10)
-        while !hotkeyTriggered && Date() < deadline1 {
-            RunLoop.current.run(until: Date().addingTimeInterval(0.05))
-        }
-
-        guard hotkeyTriggered else {
-            print("✗ Hotkey not triggered within 10s")
-            hotkeyManager.stop()
-            return
-        }
-        print("✓ Hotkey detected!")
-        hotkeyTriggered = false
-
-        print("")
-        print("Step 2: Starting audio capture. Speak now for 3 seconds...")
-
-        guard let device = AVCaptureDevice.default(for: .audio) else {
-            print("✗ No audio device")
-            return
-        }
-
-        let session = AVCaptureSession()
-        session.sessionPreset = .high
-        let input = try AVCaptureDeviceInput(device: device)
-        session.addInput(input)
-
-        let output = AVCaptureAudioDataOutput()
-        let collector = AudioCollector()
-        let queue = DispatchQueue(label: "test-integration-audio", qos: .userInteractive)
-        output.setSampleBufferDelegate(collector, queue: queue)
-        session.addOutput(output)
-
-        session.startRunning()
-        print("✓ Recording started")
-
-        var lastLogTime = Date()
-        let recordDeadline = Date().addingTimeInterval(3)
-        while Date() < recordDeadline {
-            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
-            if Date().timeIntervalSince(lastLogTime) >= 0.5 {
-                let count = collector.getCount()
-                print("  [Audio] \(count) samples (\(String(format: "%.1f", Double(count) / 16000.0))s)")
-                lastLogTime = Date()
-            }
-        }
-
-        session.stopRunning()
-
-        audioSamples = collector.getSamples()
-
-        print("✓ Recording stopped: \(audioSamples.count) samples (\(String(format: "%.1f", Double(audioSamples.count) / 16000.0))s)")
-
-        guard audioSamples.count > 1600 else {
-            print("✗ Too little audio captured")
-            hotkeyManager.stop()
-            return
-        }
-
-        print("")
-        print("Step 3: Transcribing...")
-
-        let semaphore = DispatchSemaphore(value: 0)
-        var transcriptionResult: String?
-        var transcriptionError: Error?
-
-        Task {
-            do {
-                let engine = WhisperKitEngine(
-                    modelName: config.model.name,
-                    language: config.model.language,
-                    translateToEnglish: config.model.translateToEnglish
-                )
-                try await engine.initialize()
-                let result = try await engine.transcribe(audioSamples: audioSamples)
-                transcriptionResult = result.text
-            } catch {
-                transcriptionError = error
-            }
-            semaphore.signal()
-        }
-
-        while semaphore.wait(timeout: .now()) == .timedOut {
-            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
-        }
-
-        if let error = transcriptionError {
-            print("✗ Transcription failed: \(error)")
-        } else if let text = transcriptionResult {
-            print("✓ Transcription: \"\(text)\"")
-        }
-
-        print("")
-        print("Step 4: Double-tap Right Option again to confirm hotkey still works...")
-
-        let deadline2 = Date().addingTimeInterval(10)
-        while !hotkeyTriggered && Date() < deadline2 {
-            RunLoop.current.run(until: Date().addingTimeInterval(0.05))
-        }
-
-        if hotkeyTriggered {
-            print("✓ Hotkey still working!")
-        } else {
-            print("⚠ Hotkey not triggered (timeout)")
-        }
-
-        hotkeyManager.stop()
-
-        print("")
-        print("═══════════════════════════════════════")
-        print("Integration test complete!")
-        print("═══════════════════════════════════════")
-    }
-}
-
-struct Reload: ParsableCommand {
-    static let configuration = CommandConfiguration(
-        abstract: "Reload configuration"
-    )
-
-    func run() throws {
-        let config = try ConfigManager.shared.load()
-        print("Configuration reloaded.")
-        print("Model: \(config.model.name)")
     }
 }
 
@@ -745,10 +287,10 @@ struct TestOpenAI: ParsableCommand {
         print("Testing OpenAI Realtime API...")
 
         guard let apiKey = ProcessInfo.processInfo.environment["OPENAI_API_KEY"], !apiKey.isEmpty else {
-            print("✗ OPENAI_API_KEY environment variable not set")
+            print("OPENAI_API_KEY environment variable not set")
             return
         }
-        print("✓ API key found")
+        print("API key found")
 
         let semaphore = DispatchSemaphore(value: 0)
         var finalTranscription: String = ""
@@ -757,10 +299,10 @@ struct TestOpenAI: ParsableCommand {
             do {
                 let engine = OpenAIRealtimeEngine(apiKey: apiKey, model: "gpt-4o-transcribe")
                 try await engine.initialize()
-                print("✓ Engine initialized")
+                print("Engine initialized")
 
                 try await engine.connect()
-                print("✓ WebSocket connected")
+                print("WebSocket connected")
                 print("")
                 print("Speak now for \(duration) seconds...")
                 print("")
@@ -771,7 +313,7 @@ struct TestOpenAI: ParsableCommand {
                 }
 
                 guard let device = AVCaptureDevice.default(for: .audio) else {
-                    print("✗ No audio device")
+                    print("No audio device")
                     semaphore.signal()
                     return
                 }
@@ -802,7 +344,7 @@ struct TestOpenAI: ParsableCommand {
                 finalTranscription = await engine.getTranscription()
                 await engine.disconnect()
             } catch {
-                print("✗ Error: \(error.localizedDescription)")
+                print("Error: \(error.localizedDescription)")
             }
             semaphore.signal()
         }
@@ -812,9 +354,7 @@ struct TestOpenAI: ParsableCommand {
         }
 
         print("")
-        print("═══════════════════════════════════════")
         print("Final transcription: \(finalTranscription)")
-        print("═══════════════════════════════════════")
     }
 }
 
@@ -850,70 +390,52 @@ final class RealtimeAudioSender: NSObject, AVCaptureAudioDataOutputSampleBufferD
         var length = 0
         var dataPointer: UnsafeMutablePointer<Int8>?
         CMBlockBufferGetDataPointer(blockBuffer, atOffset: 0, lengthAtOffsetOut: nil, totalLengthOut: &length, dataPointerOut: &dataPointer)
-        guard let data = dataPointer, length > 0 else { return }
 
-        var floatSamples = [Float](repeating: 0, count: frameCount)
+        guard let rawData = dataPointer else { return }
+
+        var floatSamples: [Float] = []
+        let totalSamples = frameCount * Int(channels)
 
         if isFloat && bitsPerChannel == 32 {
-            let floatData = UnsafeRawPointer(data).bindMemory(to: Float.self, capacity: frameCount * Int(channels))
-            for i in 0..<frameCount {
-                floatSamples[i] = floatData[i * Int(channels)]
-            }
+            let floatPtr = rawData.withMemoryRebound(to: Float.self, capacity: totalSamples) { $0 }
+            floatSamples = Array(UnsafeBufferPointer(start: floatPtr, count: totalSamples))
         } else if isSignedInt && bitsPerChannel == 16 {
-            let int16Data = UnsafeRawPointer(data).bindMemory(to: Int16.self, capacity: frameCount * Int(channels))
-            for i in 0..<frameCount {
-                floatSamples[i] = Float(int16Data[i * Int(channels)]) / Float(Int16.max)
-            }
+            let int16Ptr = rawData.withMemoryRebound(to: Int16.self, capacity: totalSamples) { $0 }
+            floatSamples = (0..<totalSamples).map { Float(int16Ptr[$0]) / Float(Int16.max) }
         } else if isSignedInt && bitsPerChannel == 32 {
-            let int32Data = UnsafeRawPointer(data).bindMemory(to: Int32.self, capacity: frameCount * Int(channels))
-            for i in 0..<frameCount {
-                floatSamples[i] = Float(int32Data[i * Int(channels)]) / Float(Int32.max)
-            }
+            let int32Ptr = rawData.withMemoryRebound(to: Int32.self, capacity: totalSamples) { $0 }
+            floatSamples = (0..<totalSamples).map { Float(int32Ptr[$0]) / Float(Int32.max) }
         } else {
             return
         }
 
-        let ratio = sourceSampleRate / targetSampleRate
-        let outputLength = Int(Double(frameCount) / ratio)
-        guard outputLength > 0 else { return }
-
-        var resampled = [Float](repeating: 0, count: outputLength)
-        for i in 0..<outputLength {
-            let srcIndex = Int(Double(i) * ratio)
-            if srcIndex < frameCount {
-                resampled[i] = floatSamples[srcIndex]
+        if sourceSampleRate != targetSampleRate || channels > 1 {
+            let ratio = sourceSampleRate / targetSampleRate
+            var resampled: [Float] = []
+            let outputLen = Int(Double(floatSamples.count) / ratio / Double(channels))
+            for i in 0..<outputLen {
+                let srcIdx = Int(Double(i) * ratio) * Int(channels)
+                if srcIdx < floatSamples.count {
+                    resampled.append(floatSamples[srcIdx])
+                }
             }
+            floatSamples = resampled
         }
 
         Task {
-            try? await engine.sendAudio(samples: resampled)
+            try? await engine.sendAudio(samples: floatSamples)
         }
     }
 }
 
-struct RunLocal: ParsableCommand {
+struct Reload: ParsableCommand {
     static let configuration = CommandConfiguration(
-        commandName: "run-local",
-        abstract: "Run CmdSpeak with local WhisperKit model (shortcut for type=local)"
+        abstract: "Reload configuration"
     )
 
     func run() throws {
-        var config = try ConfigManager.shared.load()
-        config.model.type = "local"
-        try Run.runLocalMode(config: config)
-    }
-}
-
-struct RunOpenAI: ParsableCommand {
-    static let configuration = CommandConfiguration(
-        commandName: "run-openai",
-        abstract: "Run CmdSpeak with OpenAI Realtime API (shortcut for type=openai-realtime)"
-    )
-
-    func run() throws {
-        var config = try ConfigManager.shared.load()
-        config.model.type = "openai-realtime"
-        try Run.runOpenAIMode(config: config)
+        _ = try ConfigManager.shared.load()
+        print("Configuration reloaded.")
     }
 }
 
@@ -923,143 +445,11 @@ struct Run: ParsableCommand {
     )
 
     func run() throws {
-        let config = try ConfigManager.shared.load()
+        var config = try ConfigManager.shared.load()
         try ConfigManager.shared.createDefaultIfNeeded()
 
-        if config.model.type == "openai-realtime" {
-            try Self.runOpenAIMode(config: config)
-        } else {
-            try Self.runLocalMode(config: config)
-        }
-    }
-
-    fileprivate static func runLocalMode(config: Config) throws {
-        print("CmdSpeak v\(CmdSpeakCore.version)")
-
-        let semaphore = DispatchSemaphore(value: 0)
-        var startError: Error?
-        var lastProgressMessage = ""
-        var accumulatedTranscription = ""
-
-        class ControllerHolder {
-            var controller: CmdSpeakController?
-        }
-        let holder = ControllerHolder()
-
-        Task { @MainActor in
-            let ctrl = CmdSpeakController(config: config)
-            holder.controller = ctrl
-
-            ctrl.onModelLoadProgress = { progress in
-                let progressBar = Self.makeProgressBar(progress.progress)
-                let clearLine = "\r\u{001B}[K"
-                let message = "\(clearLine)\(progressBar) \(progress.message)"
-                if message != lastProgressMessage {
-                    print(message, terminator: "")
-                    fflush(stdout)
-                    lastProgressMessage = message
-                }
-                if progress.stage == .ready {
-                    print("")
-                }
-            }
-
-            ctrl.onPartialTranscription = { delta in
-                accumulatedTranscription += delta
-                let clearLine = "\r\u{001B}[K"
-                let preview = accumulatedTranscription.count > 60
-                    ? "..." + accumulatedTranscription.suffix(57)
-                    : accumulatedTranscription
-                print("\(clearLine)📝 \(preview)", terminator: "")
-                fflush(stdout)
-            }
-
-            ctrl.onFinalTranscription = { _ in
-                print("")
-                accumulatedTranscription = ""
-            }
-
-            ctrl.onLanguageDetected = { language in
-                let langName = Self.languageName(for: language)
-                print("🌐 \(langName)")
-                fflush(stdout)
-            }
-
-            ctrl.onStateChange = { state in
-                switch state {
-                case .idle:
-                    accumulatedTranscription = ""
-                    print("\n🎤 Ready - Double-tap Right Option to dictate")
-                    fflush(stdout)
-                case .listening:
-                    print("\n🔴 LISTENING - Speak now! (double-tap again to stop)")
-                    fflush(stdout)
-                case .processing:
-                    if accumulatedTranscription.isEmpty {
-                        print("\n⏳ Processing...")
-                    } else {
-                        print("\n⏳ Finalizing...")
-                    }
-                    fflush(stdout)
-                case .injecting:
-                    break
-                case .error(let message):
-                    print("❌ Error: \(message)")
-                    fflush(stdout)
-                }
-            }
-
-            do {
-                try await ctrl.start()
-            } catch {
-                startError = error
-            }
-            semaphore.signal()
-        }
-
-        while semaphore.wait(timeout: .now()) == .timedOut {
-            RunLoop.main.run(until: Date().addingTimeInterval(0.1))
-        }
-
-        if let error = startError {
-            print("Error: \(error.localizedDescription)")
-            return
-        }
-
-        let langInfo: String
-        if config.model.translateToEnglish {
-            langInfo = " (translate → English)"
-        } else if let lang = config.model.language {
-            langInfo = " (\(lang))"
-        } else {
-            langInfo = ""
-        }
-
-        print("✓ Ready\(langInfo)")
-        print("")
-        print("  Double-tap Right Option to start/stop dictation")
-        print("  Ctrl+C to quit")
-        print("")
-        print("Tip: Disable macOS Dictation shortcut to avoid conflicts:")
-        print("  System Settings → Keyboard → Dictation → Shortcut → Off")
-        print("")
-        print("🎤 Waiting for input...")
-        fflush(stdout)
-
-        signal(SIGINT) { _ in
-            print("\nShutting down...")
-            Darwin.exit(0)
-        }
-
-        while true {
-            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
-        }
-    }
-
-    static func runOpenAIMode(config: Config) throws {
-        var mutableConfig = config
         let apiKey: String
-        if let key = mutableConfig.model.apiKey, !key.isEmpty {
+        if let key = config.model.apiKey, !key.isEmpty {
             apiKey = key
         } else if let envKey = ProcessInfo.processInfo.environment["OPENAI_API_KEY"], !envKey.isEmpty {
             apiKey = envKey
@@ -1069,12 +459,10 @@ struct Run: ParsableCommand {
             return
         }
 
-        mutableConfig.model.apiKey = apiKey
-        if mutableConfig.model.name.isEmpty || mutableConfig.model.name.hasPrefix("openai_whisper") {
-            mutableConfig.model.name = "gpt-4o-transcribe"
-        }
+        config.model.apiKey = apiKey
+        config.model.name = "gpt-4o-transcribe"
 
-        let finalConfig = mutableConfig
+        let finalConfig = config
         let semaphore = DispatchSemaphore(value: 0)
         var startError: Error?
 
@@ -1090,7 +478,7 @@ struct Run: ParsableCommand {
             ctrl.onStateChange = { state in
                 switch state {
                 case .idle:
-                    print("\n[⌥⌥ to start]")
+                    print("\n[Ready - double-tap Right Option to start]")
                     fflush(stdout)
                 case .connecting:
                     print("[connecting] ", terminator: "")
@@ -1115,8 +503,9 @@ struct Run: ParsableCommand {
                 fflush(stdout)
             }
 
-            ctrl.onFinalTranscription = { _ in
+            ctrl.onFinalTranscription = { text in
                 print(" [done]")
+                print(text)
                 fflush(stdout)
             }
 
@@ -1137,7 +526,7 @@ struct Run: ParsableCommand {
             return
         }
 
-        print("CmdSpeak | ⌥⌥ start → speak → ⌥⌥ stop (or 10s silence) | Ctrl+C quit")
+        print("CmdSpeak | double-tap Right Option to start/stop | Ctrl+C quit")
         fflush(stdout)
 
         signal(SIGINT) { _ in
@@ -1148,21 +537,5 @@ struct Run: ParsableCommand {
         while true {
             RunLoop.current.run(until: Date().addingTimeInterval(0.1))
         }
-    }
-
-    private static func makeProgressBar(_ progress: Double, width: Int = 30) -> String {
-        let filled = Int(progress * Double(width))
-        let empty = width - filled
-        let bar = String(repeating: "█", count: filled) + String(repeating: "░", count: empty)
-        let percent = Int(progress * 100)
-        return "[\(bar)] \(percent)%"
-    }
-
-    private static func languageName(for code: String) -> String {
-        let locale = Locale(identifier: "en")
-        if let name = locale.localizedString(forLanguageCode: code) {
-            return "\(name) (\(code))"
-        }
-        return code
     }
 }

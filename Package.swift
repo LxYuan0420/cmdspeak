@@ -12,7 +12,6 @@ let package = Package(
         .library(name: "CmdSpeakCore", targets: ["CmdSpeakCore"])
     ],
     dependencies: [
-        .package(url: "https://github.com/argmaxinc/WhisperKit.git", from: "0.15.0"),
         .package(url: "https://github.com/LebJe/TOMLKit.git", from: "0.6.0"),
         .package(url: "https://github.com/apple/swift-argument-parser.git", from: "1.3.0")
     ],
@@ -33,7 +32,6 @@ let package = Package(
         .target(
             name: "CmdSpeakCore",
             dependencies: [
-                .product(name: "WhisperKit", package: "WhisperKit"),
                 .product(name: "TOMLKit", package: "TOMLKit")
             ],
             path: "Sources/CmdSpeak/Core"
