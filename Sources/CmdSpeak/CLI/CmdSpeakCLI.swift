@@ -478,20 +478,22 @@ struct Run: ParsableCommand {
             ctrl.onStateChange = { state in
                 switch state {
                 case .idle:
-                    print("[Ready]")
+                    print("\n[Ready] ⌥⌥ to start")
                     fflush(stdout)
                 case .connecting:
-                    break
+                    print("[Connecting...]", terminator: "")
+                    fflush(stdout)
                 case .listening:
-                    print("", terminator: "")
+                    print("\r[Listening] ", terminator: "")
                     fflush(stdout)
                 case .reconnecting(let attempt, let maxAttempts):
-                    print("[Reconnecting \(attempt)/\(maxAttempts)]")
+                    print("[Reconnecting \(attempt)/\(maxAttempts)]", terminator: "")
                     fflush(stdout)
                 case .finalizing:
-                    break
+                    print(" ✓")
+                    fflush(stdout)
                 case .error(let message):
-                    print("[Error] \(message)")
+                    print("\n[Error] \(message)")
                     fflush(stdout)
                 }
             }
@@ -502,8 +504,6 @@ struct Run: ParsableCommand {
             }
 
             ctrl.onFinalTranscription = { _ in
-                print("")
-                fflush(stdout)
             }
 
             do {
@@ -524,7 +524,7 @@ struct Run: ParsableCommand {
         }
 
         print("CmdSpeak | ⌥⌥ to start/cancel | Ctrl+C quit")
-        print("[Ready]")
+        print("[Ready] ⌥⌥ to start")
         fflush(stdout)
 
         signal(SIGINT) { _ in
