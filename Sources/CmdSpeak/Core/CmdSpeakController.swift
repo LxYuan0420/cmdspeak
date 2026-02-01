@@ -201,7 +201,7 @@ public final class CmdSpeakController {
             lastBufferLogTime = now
         }
 
-        vad.process(buffer: buffer)
+        vad.processSamples(resampled)
     }
 
     private func handleSpeechEnd() async {

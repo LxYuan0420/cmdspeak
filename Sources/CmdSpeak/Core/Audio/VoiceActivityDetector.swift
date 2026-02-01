@@ -7,6 +7,7 @@ public protocol VoiceActivityDetecting {
     var onSpeechEnd: (() -> Void)? { get set }
 
     func process(buffer: AVAudioPCMBuffer)
+    func processSamples(_ samples: [Float])
     func reset()
 }
 
@@ -41,11 +42,16 @@ public final class VoiceActivityDetector: VoiceActivityDetecting {
 
     public func process(buffer: AVAudioPCMBuffer) {
         guard let channelData = buffer.floatChannelData?[0] else { return }
-
         let frameLength = Int(buffer.frameLength)
-        let rms = calculateRMS(samples: channelData, count: frameLength)
+        let samples = Array(UnsafeBufferPointer(start: channelData, count: frameLength))
+        processSamples(samples)
+    }
 
-        samplesProcessed += frameLength
+    public func processSamples(_ samples: [Float]) {
+        guard !samples.isEmpty else { return }
+
+        let rms = calculateRMSFromArray(samples)
+        samplesProcessed += samples.count
 
         if rms > energyThreshold {
             if !isSpeaking {
@@ -75,11 +81,12 @@ public final class VoiceActivityDetector: VoiceActivityDetecting {
         samplesProcessed = 0
     }
 
-    private func calculateRMS(samples: UnsafePointer<Float>, count: Int) -> Float {
+    private func calculateRMSFromArray(_ samples: [Float]) -> Float {
+        guard !samples.isEmpty else { return 0 }
         var sum: Float = 0
-        for i in 0..<count {
-            sum += samples[i] * samples[i]
+        for sample in samples {
+            sum += sample * sample
         }
-        return sqrt(sum / Float(count))
+        return sqrt(sum / Float(samples.count))
     }
 }
