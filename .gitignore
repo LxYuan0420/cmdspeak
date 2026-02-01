@@ -1,8 +1,7 @@
 # Documentation
-*.md
 !README.md
 !HOMEBREW.md
-PRODUCT.md
+!PRODUCT.md
 
 .build/
 .swiftpm/
