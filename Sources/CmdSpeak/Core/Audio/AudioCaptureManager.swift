@@ -39,17 +39,19 @@ public final class AudioCaptureManager {
         let engine = AVAudioEngine()
         let inputNode = engine.inputNode
         
-        let outputFormat = inputNode.outputFormat(forBus: 0)
-        guard outputFormat.sampleRate > 0, outputFormat.channelCount > 0 else {
+        _ = inputNode.inputFormat(forBus: 0)
+        
+        let format = inputNode.outputFormat(forBus: 0)
+        guard format.sampleRate > 0, format.channelCount > 0 else {
             throw AudioCaptureError.noInputDevice
         }
 
-        Self.logger.info("Audio format: \(outputFormat.sampleRate)Hz, \(outputFormat.channelCount) channels")
+        Self.logger.info("Audio format: \(format.sampleRate)Hz, \(format.channelCount) ch")
 
         let callback = onAudioBuffer
         let queue = callbackQueue
         
-        inputNode.installTap(onBus: 0, bufferSize: bufferSize, format: outputFormat) { [weak self] buffer, _ in
+        inputNode.installTap(onBus: 0, bufferSize: bufferSize, format: nil) { [weak self] buffer, _ in
             guard self != nil else { return }
             queue.async {
                 callback?(buffer)
