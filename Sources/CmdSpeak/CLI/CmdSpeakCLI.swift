@@ -478,22 +478,22 @@ struct Run: ParsableCommand {
             ctrl.onStateChange = { state in
                 switch state {
                 case .idle:
-                    print("\n[Ready - double-tap Right Option to start]")
+                    print("\n[Ready]")
                     fflush(stdout)
                 case .connecting:
-                    print("[connecting] ", terminator: "")
+                    print("[Connecting...]", terminator: "")
                     fflush(stdout)
                 case .listening:
-                    print("\r[listening]  ", terminator: "")
+                    print("\r[Listening] ", terminator: "")
                     fflush(stdout)
                 case .reconnecting(let attempt, let maxAttempts):
-                    print("\r[reconnecting \(attempt)/\(maxAttempts)] ", terminator: "")
+                    print("\r[Reconnecting \(attempt)/\(maxAttempts)]", terminator: "")
                     fflush(stdout)
                 case .finalizing:
-                    print(" [finalizing...]", terminator: "")
+                    print(" [Injecting]", terminator: "")
                     fflush(stdout)
                 case .error(let message):
-                    print("[error] \(message)")
+                    print("\n[Error] \(message)")
                     fflush(stdout)
                 }
             }
@@ -503,9 +503,8 @@ struct Run: ParsableCommand {
                 fflush(stdout)
             }
 
-            ctrl.onFinalTranscription = { text in
-                print(" [done]")
-                print(text)
+            ctrl.onFinalTranscription = { _ in
+                print("")
                 fflush(stdout)
             }
 
@@ -526,7 +525,7 @@ struct Run: ParsableCommand {
             return
         }
 
-        print("CmdSpeak | double-tap Right Option to start/stop | Ctrl+C quit")
+        print("CmdSpeak | Double-tap Right Option (⌥⌥) to start, again to cancel | Ctrl+C quit")
         fflush(stdout)
 
         signal(SIGINT) { _ in
