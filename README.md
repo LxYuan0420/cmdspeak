@@ -3,8 +3,11 @@
 [![Swift 5.10](https://img.shields.io/badge/Swift-5.10-orange.svg)](https://swift.org)
 [![macOS 14+](https://img.shields.io/badge/macOS-14%2B-blue.svg)](https://developer.apple.com/macos/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![Tests](https://img.shields.io/badge/tests-138%20passing-brightgreen.svg)](Tests/)
 
 Drop-in replacement for macOS Dictation. Double-tap Right Option, speak, text appears at cursor.
+
+**Version 0.3.0** — OpenAI Realtime API streaming transcription
 
 ## Installation
 
@@ -113,6 +116,29 @@ Run `cmdspeak setup` for guided permission configuration.
 ### API key not found
 - Set `OPENAI_API_KEY` environment variable, or
 - Add `api_key = "your-key"` to config.toml
+
+## Development
+
+```bash
+swift build          # Build
+swift test           # Run 138 tests
+swift build -c release  # Release build
+```
+
+## Architecture
+
+```
+User Input (⌥⌥) → HotkeyManager → OpenAIRealtimeController
+                                          ↓
+AudioCaptureManager → AudioResampler → OpenAIRealtimeEngine (WebSocket)
+                                          ↓
+                                   TextInjector → Cursor
+```
+
+## Dependencies
+
+- [TOMLKit](https://github.com/LebJe/TOMLKit) — Configuration parsing
+- [ArgumentParser](https://github.com/apple/swift-argument-parser) — CLI interface
 
 ## Contributing
 
