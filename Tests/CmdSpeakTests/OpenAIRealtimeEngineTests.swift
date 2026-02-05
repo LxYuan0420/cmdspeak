@@ -480,16 +480,16 @@ struct MessageHandlingTests {
         let engine = OpenAIRealtimeEngine(apiKey: "test-key")
         try await engine.initialize()
 
-        let receivedError = AtomicValue<String?>(nil)
-        await engine.setOnError { message in
-            receivedError.value = message
+        let receivedError = AtomicValue<RealtimeAPIError?>(nil)
+        await engine.setOnError { error in
+            receivedError.value = error
         }
 
         await engine.testHandleMessage("""
         {"type": "error", "error": {"message": "Rate limit exceeded"}}
         """)
 
-        #expect(receivedError.value == "Rate limit exceeded")
+        #expect(receivedError.value?.message == "Rate limit exceeded")
     }
 
     @Test("Invalid JSON is ignored")

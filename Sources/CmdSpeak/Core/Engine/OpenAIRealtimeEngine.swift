@@ -28,7 +28,7 @@ public actor OpenAIRealtimeEngine: TranscriptionEngine {
 
     private var partialTranscriptionHandler: (@Sendable (String) -> Void)?
     private var onDisconnect: (@Sendable (Bool) -> Void)?
-    private var onError: (@Sendable (String) -> Void)?
+    private var onError: (@Sendable (RealtimeAPIError) -> Void)?
     private var onFinalTranscript: (@Sendable (String) -> Void)?
     private var onSpeechStarted: (@Sendable () -> Void)?
     private var onSpeechStopped: (@Sendable () -> Void)?
@@ -169,7 +169,7 @@ public actor OpenAIRealtimeEngine: TranscriptionEngine {
         onDisconnect = handler
     }
 
-    public func setOnError(_ handler: (@Sendable (String) -> Void)?) {
+    public func setOnError(_ handler: (@Sendable (RealtimeAPIError) -> Void)?) {
         onError = handler
     }
 
@@ -404,9 +404,10 @@ public actor OpenAIRealtimeEngine: TranscriptionEngine {
 
         case .error:
             if let errorMessage = try? Self.jsonDecoder.decode(OpenAIError.self, from: data) {
-                let code = errorMessage.error.code ?? "unknown"
-                Self.logger.error("API error [\(code)]: \(errorMessage.error.message)")
-                onError?(errorMessage.error.message)
+                let code = errorMessage.error.code
+                let apiError = RealtimeAPIError(code: code, message: errorMessage.error.message)
+                Self.logger.error("API error [\(code ?? "unknown")]: \(errorMessage.error.message)")
+                onError?(apiError)
             }
         }
     }

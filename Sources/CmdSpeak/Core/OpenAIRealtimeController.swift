@@ -85,7 +85,7 @@ public final class OpenAIRealtimeController {
         }
 
         audioCapture.onAudioBuffer = { [weak self] buffer in
-            Task { @MainActor in
+            DispatchQueue.main.async {
                 self?.handleAudioBuffer(buffer)
             }
         }
@@ -152,6 +152,7 @@ public final class OpenAIRealtimeController {
         audioCapture.stopRecording()
         silenceTimer?.invalidate()
         silenceTimer = nil
+        stopAudioSendPipeline()
 
         guard shouldRetryOnError else {
             Self.logger.info("Not retrying due to fatal error")
@@ -208,16 +209,16 @@ public final class OpenAIRealtimeController {
 
     private var shouldRetryOnError: Bool = true
 
-    private func handleEngineError(_ message: String) {
-        let errorType = classifyError(message)
+    private func handleEngineError(_ error: RealtimeAPIError) {
+        let errorType = classifyError(error)
 
         switch errorType {
         case .fatal(let userMessage):
-            Self.logger.error("Fatal error: \(message)")
+            Self.logger.error("Fatal error: \(error.message)")
             shouldRetryOnError = false
             setState(.error(userMessage))
         case .transient:
-            Self.logger.warning("Transient error: \(message)")
+            Self.logger.warning("Transient error: \(error.message)")
         }
     }
 
@@ -226,24 +227,32 @@ public final class OpenAIRealtimeController {
         case transient
     }
 
-    private func classifyError(_ message: String) -> ErrorType {
-        let lowerMessage = message.lowercased()
+    private func classifyError(_ error: RealtimeAPIError) -> ErrorType {
+        if let code = error.code {
+            switch code {
+            case "invalid_api_key", "authentication_error", "unauthorized":
+                return .fatal("Invalid API key")
+            case "model_not_found":
+                return .fatal("Model not available")
+            case "insufficient_quota", "billing_error":
+                return .fatal("API quota exceeded")
+            default:
+                break
+            }
+        }
 
-        if lowerMessage.contains("invalid_api_key") ||
-           lowerMessage.contains("invalid api key") ||
+        let lowerMessage = error.message.lowercased()
+        if lowerMessage.contains("invalid api key") ||
            lowerMessage.contains("authentication") ||
-           lowerMessage.contains("unauthorized") ||
-           lowerMessage.contains("invalid_request_error") {
+           lowerMessage.contains("unauthorized") {
             return .fatal("Invalid API key")
         }
 
-        if lowerMessage.contains("model_not_found") ||
-           lowerMessage.contains("model not found") {
+        if lowerMessage.contains("model not found") {
             return .fatal("Model not available")
         }
 
-        if lowerMessage.contains("insufficient_quota") ||
-           lowerMessage.contains("billing") {
+        if lowerMessage.contains("billing") {
             return .fatal("API quota exceeded")
         }
 
@@ -256,7 +265,7 @@ public final class OpenAIRealtimeController {
             withTimeInterval: silenceTimeout,
             repeats: false
         ) { [weak self] _ in
-            Task { @MainActor [weak self] in
+            Task { @MainActor in
                 guard let self = self, case .listening = self.state else { return }
                 self.metricsCollector?.recordDisconnect(reason: .silenceTimeout)
                 await self.finishAndInject(reason: .silenceTimeout)
