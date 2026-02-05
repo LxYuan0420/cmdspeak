@@ -7,7 +7,6 @@ import os
 ///
 /// Note: `onAudioBuffer` is called on a dedicated audio callback queue,
 /// not the main thread. Callers must dispatch to main if needed.
-@MainActor
 public final class AudioCaptureManager {
     private static let logger = Logger(subsystem: "com.cmdspeak", category: "audio-capture")
 
