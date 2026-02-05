@@ -1,7 +1,7 @@
 class Cmdspeak < Formula
-  desc "Drop-in replacement for macOS Dictation with local and cloud transcription"
+  desc "Drop-in replacement for macOS Dictation with OpenAI streaming transcription"
   homepage "https://github.com/LxYuan0420/cmdspeak"
-  url "https://github.com/LxYuan0420/cmdspeak.git", tag: "v0.1.0"
+  url "https://github.com/LxYuan0420/cmdspeak.git", tag: "v0.3.0"
   license "MIT"
   head "https://github.com/LxYuan0420/cmdspeak.git", branch: "main"
 
@@ -24,11 +24,12 @@ class Cmdspeak < Formula
       Disable macOS Dictation to avoid conflicts:
         System Settings → Keyboard → Dictation → Shortcut → Off
 
-      Usage:
-        cmdspeak run          # Run with local WhisperKit (default)
-        cmdspeak run-openai   # Run with OpenAI (requires OPENAI_API_KEY)
+      Set your OpenAI API key:
+        export OPENAI_API_KEY=your-key
 
-      First run downloads ~1GB model and compiles for Neural Engine (2-4 min).
+      Usage:
+        cmdspeak              # Start dictation (double-tap Right Option)
+        cmdspeak setup        # Configure permissions
     EOS
   end
 

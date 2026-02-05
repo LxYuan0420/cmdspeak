@@ -34,8 +34,8 @@ In the main cmdspeak repository, create a version tag:
 
 ```bash
 cd /path/to/cmdspeak
-git tag -a v0.1.0 -m "Release v0.1.0"
-git push origin v0.1.0
+git tag -a v0.3.0 -m "Release v0.3.0"
+git push origin v0.3.0
 ```
 
 ### 4. Test the installation
