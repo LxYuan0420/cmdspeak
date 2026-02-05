@@ -3,7 +3,7 @@ import Foundation
 import os
 
 /// Resamples audio to a target sample rate using AVAudioConverter.
-/// Defaults to 24kHz for OpenAI Realtime API, but can be configured for WhisperKit (16kHz).
+/// Defaults to 24kHz for OpenAI Realtime API.
 public final class AudioResampler {
     private static let logger = Logger(subsystem: "com.cmdspeak", category: "resampler")
 
@@ -15,7 +15,7 @@ public final class AudioResampler {
     private var lastInputFormat: AVAudioFormat?
 
     /// Initialize with target sample rate.
-    /// - Parameter targetSampleRate: Target sample rate in Hz (default: 24000 for OpenAI, use 16000 for WhisperKit)
+    /// - Parameter targetSampleRate: Target sample rate in Hz (default: 24000 for OpenAI Realtime API)
     public init(targetSampleRate: Double = 24000) {
         self.targetSampleRate = targetSampleRate
     }
