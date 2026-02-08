@@ -442,6 +442,12 @@ struct Reload: ParsableCommand {
     }
 }
 
+private final class ControllerHolder: @unchecked Sendable {
+    var controller: OpenAIRealtimeController?
+}
+
+private nonisolated(unsafe) var _activeControllerHolder: ControllerHolder?
+
 struct Run: ParsableCommand {
     static let configuration = CommandConfiguration(
         abstract: "Run CmdSpeak (default)"
@@ -468,10 +474,6 @@ struct Run: ParsableCommand {
         let finalConfig = config
         let semaphore = DispatchSemaphore(value: 0)
         var startError: Error?
-
-        class ControllerHolder {
-            var controller: OpenAIRealtimeController?
-        }
         let holder = ControllerHolder()
 
         Task { @MainActor in
@@ -530,8 +532,10 @@ struct Run: ParsableCommand {
         print("[Ready] ⌥⌥ to start")
         fflush(stdout)
 
+        _activeControllerHolder = holder
         signal(SIGINT) { _ in
             print("\n")
+            _activeControllerHolder?.controller?.stop()
             Darwin.exit(0)
         }
 
