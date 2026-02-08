@@ -31,7 +31,6 @@ public final class OpenAIRealtimeController {
 
     private var silenceTimer: Timer?
     private let silenceTimeout: TimeInterval
-    private var pendingText: String = ""
     private var isSpeaking: Bool = false
 
     private var currentSessionID: UUID?
@@ -137,7 +136,6 @@ public final class OpenAIRealtimeController {
 
     private func handlePartialTranscription(_ delta: String) {
         guard case .listening = state else { return }
-        pendingText += delta
         metricsCollector?.recordTranscription(characters: delta.count)
         onPartialTranscription?(delta)
     }
@@ -159,7 +157,6 @@ public final class OpenAIRealtimeController {
         }
 
         let savedSessionID = currentSessionID
-        let savedText = pendingText
 
         for attempt in 1...Self.maxReconnectAttempts {
             guard currentSessionID == savedSessionID else {
@@ -190,7 +187,6 @@ public final class OpenAIRealtimeController {
                 metricsCollector?.recordReconnectSuccess()
                 startAudioSendPipeline()
                 try await audioCapture.startRecording()
-                pendingText = savedText
                 setState(.listening)
                 resetSilenceTimer()
                 Self.logger.info("Reconnected successfully")
@@ -298,7 +294,6 @@ public final class OpenAIRealtimeController {
         }
 
         let text = finalText.trimmingCharacters(in: .whitespacesAndNewlines)
-        pendingText = ""
         currentSessionID = nil
         forceInjectRequested = false
 
@@ -437,7 +432,6 @@ public final class OpenAIRealtimeController {
         metricsCollector = collector
 
         setState(.connecting)
-        pendingText = ""
         droppedBufferCount = 0
         isSpeaking = false
         shouldRetryOnError = true
