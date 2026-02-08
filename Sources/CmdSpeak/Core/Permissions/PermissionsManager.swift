@@ -88,8 +88,8 @@ public final class PermissionsManager: @unchecked Sendable {
     /// Use `waitForAccessibilityPermission()` to poll for grant.
     public func requestAccessibilityPermission() {
         Self.logger.info("Requesting accessibility permission")
-        let options = [kAXTrustedCheckOptionPrompt.takeRetainedValue() as String: true]
-        _ = AXIsProcessTrustedWithOptions(options as CFDictionary)
+        let promptKey = kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String
+        _ = AXIsProcessTrustedWithOptions([promptKey: true] as CFDictionary)
     }
 
     /// Open System Settings to the Accessibility pane.

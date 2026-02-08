@@ -64,8 +64,8 @@ public final class HotkeyManager: HotkeyManaging {
     }
 
     public func requestAccessibilityPermission() {
-        let options = [kAXTrustedCheckOptionPrompt.takeRetainedValue() as String: true]
-        AXIsProcessTrustedWithOptions(options as CFDictionary)
+        let promptKey = kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String
+        AXIsProcessTrustedWithOptions([promptKey: true] as CFDictionary)
     }
 
     public func stop() {
