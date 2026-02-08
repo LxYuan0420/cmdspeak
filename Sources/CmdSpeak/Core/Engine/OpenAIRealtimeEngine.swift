@@ -125,6 +125,12 @@ public actor OpenAIRealtimeEngine: TranscriptionEngine {
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             self.sessionReadyContinuation = continuation
 
+            if self.sessionCreated {
+                self.sessionReadyContinuation = nil
+                continuation.resume()
+                return
+            }
+
             Task {
                 try? await Task.sleep(nanoseconds: UInt64(Self.sessionReadyTimeout * 1_000_000_000))
                 if let cont = self.sessionReadyContinuation {
