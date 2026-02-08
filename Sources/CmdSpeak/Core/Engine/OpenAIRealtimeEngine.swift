@@ -275,8 +275,18 @@ public actor OpenAIRealtimeEngine: TranscriptionEngine {
             return transcript
         }
 
+        if finalTranscriptContinuation != nil {
+            return finalTranscript ?? accumulatedText
+        }
+
         return await withCheckedContinuation { (continuation: CheckedContinuation<String, Never>) in
             self.finalTranscriptContinuation = continuation
+
+            if let transcript = self.finalTranscript {
+                self.finalTranscriptContinuation = nil
+                continuation.resume(returning: transcript)
+                return
+            }
 
             Task {
                 try? await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000))
