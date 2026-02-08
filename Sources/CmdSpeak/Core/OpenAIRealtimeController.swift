@@ -191,6 +191,7 @@ public final class OpenAIRealtimeController {
                 try await engine.connect()
                 metricsCollector?.recordConnectionEstablished()
                 metricsCollector?.recordReconnectSuccess()
+                startAudioSendPipeline()
                 try await audioCapture.startRecording()
                 pendingText = savedText
                 setState(.listening)
