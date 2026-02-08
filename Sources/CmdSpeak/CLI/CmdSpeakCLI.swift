@@ -203,14 +203,17 @@ struct TestMic: AsyncParsableCommand {
 }
 
 final class SimpleAudioDelegate: NSObject, AVCaptureAudioDataOutputSampleBufferDelegate {
-    var sampleCount = 0
+    private let lock = NSLock()
+    private var _sampleCount = 0
+    var sampleCount: Int { lock.withLock { _sampleCount } }
 
     func captureOutput(
         _ output: AVCaptureOutput,
         didOutput sampleBuffer: CMSampleBuffer,
         from connection: AVCaptureConnection
     ) {
-        sampleCount += CMSampleBufferGetNumSamples(sampleBuffer)
+        let count = CMSampleBufferGetNumSamples(sampleBuffer)
+        lock.withLock { _sampleCount += count }
     }
 }
 
