@@ -6,7 +6,7 @@ import os
 
 /// Manages system permissions required for CmdSpeak.
 /// Provides onboarding flow to guide users through permission grants.
-public final class PermissionsManager: @unchecked Sendable {
+public final class PermissionsManager: Sendable {
     private static let logger = Logger(subsystem: "com.cmdspeak", category: "permissions")
 
     public static let shared = PermissionsManager()
