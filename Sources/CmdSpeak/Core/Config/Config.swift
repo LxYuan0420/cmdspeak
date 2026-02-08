@@ -164,34 +164,44 @@ public final class ConfigManager {
     }
 
     private func generateTOML(from config: Config) -> String {
-        var toml = """
-        [model]
-        name = "\(config.model.name)"
-        # api_key = "env:OPENAI_API_KEY"  # Or set OPENAI_API_KEY environment variable
-        # language = "en"  # Optional: force language (omit for auto-detect)
-        """
+        let escapedName = escapeTOMLString(config.model.name)
+        let escapedTrigger = escapeTOMLString(config.hotkey.trigger)
+
+        var lines: [String] = [
+            "[model]",
+            "name = \"\(escapedName)\"",
+            "# api_key = \"env:OPENAI_API_KEY\"  # Or set OPENAI_API_KEY environment variable",
+            "# language = \"en\"  # Optional: force language (omit for auto-detect)"
+        ]
 
         if let language = config.model.language {
-            toml += "\nlanguage = \"\(language)\""
+            lines.append("language = \"\(escapeTOMLString(language))\"")
         }
 
-        toml += """
+        lines += [
+            "",
+            "[hotkey]",
+            "trigger = \"\(escapedTrigger)\"",
+            "interval_ms = \(config.hotkey.intervalMs)",
+            "",
+            "[audio]",
+            "sample_rate = \(config.audio.sampleRate)",
+            "silence_threshold_ms = \(config.audio.silenceThresholdMs)",
+            "",
+            "[feedback]",
+            "sound_enabled = \(config.feedback.soundEnabled)",
+            "menu_bar_icon = \(config.feedback.menuBarIcon)"
+        ]
 
-        
-        [hotkey]
-        trigger = "\(config.hotkey.trigger)"
-        interval_ms = \(config.hotkey.intervalMs)
+        return lines.joined(separator: "\n")
+    }
 
-        [audio]
-        sample_rate = \(config.audio.sampleRate)
-        silence_threshold_ms = \(config.audio.silenceThresholdMs)
-
-        [feedback]
-        sound_enabled = \(config.feedback.soundEnabled)
-        menu_bar_icon = \(config.feedback.menuBarIcon)
-        """
-
-        return toml
+    private func escapeTOMLString(_ value: String) -> String {
+        value
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
+            .replacingOccurrences(of: "\n", with: "\\n")
+            .replacingOccurrences(of: "\t", with: "\\t")
     }
 
     private func resolveEnvValue(_ value: String) -> String {
