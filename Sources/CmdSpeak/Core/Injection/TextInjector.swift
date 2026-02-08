@@ -105,13 +105,15 @@ public final class TextInjector: TextInjecting {
 
         if !savedItems.isEmpty {
             pasteboard.clearContents()
+            var restoredItems: [NSPasteboardItem] = []
             for itemData in savedItems {
                 let newItem = NSPasteboardItem()
                 for (type, data) in itemData {
                     newItem.setData(data, forType: type)
                 }
-                pasteboard.writeObjects([newItem])
+                restoredItems.append(newItem)
             }
+            pasteboard.writeObjects(restoredItems)
         }
     }
 
