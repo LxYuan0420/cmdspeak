@@ -487,8 +487,17 @@ public final class OpenAIRealtimeController {
         guard let resampled = resampler.resample(buffer) else { return }
 
         if let continuation = audioBufferContinuation {
-            metricsCollector?.recordAudioBufferSent()
-            continuation.yield(resampled)
+            switch continuation.yield(resampled) {
+            case .enqueued:
+                metricsCollector?.recordAudioBufferSent()
+            case .dropped:
+                metricsCollector?.recordAudioBufferDropped()
+                droppedBufferCount += 1
+            case .terminated:
+                break
+            @unknown default:
+                break
+            }
         } else {
             metricsCollector?.recordAudioBufferDropped()
             droppedBufferCount += 1
