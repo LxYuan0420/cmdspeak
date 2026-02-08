@@ -3,21 +3,23 @@ import Foundation
 import os
 
 /// Captures audio from the default input device using AVAudioEngine.
-/// Provides audio buffers via callback for transcription.
-///
-/// Note: `onAudioBuffer` is called on a dedicated audio callback queue,
-/// not the main thread. Callers must dispatch to main if needed.
+/// Converts to float samples synchronously in the tap callback and
+/// delivers `[Float]` values via `onAudioSamples`, which is safe to
+/// call from any thread.
 public final class AudioCaptureManager {
     private static let logger = Logger(subsystem: "com.cmdspeak", category: "audio-capture")
 
     private var audioEngine: AVAudioEngine?
     private let bufferSize: AVAudioFrameCount = 4096
-    private let callbackQueue = DispatchQueue(label: "com.cmdspeak.audio.callback", qos: .userInteractive)
 
     public private(set) var isRecording = false
-    public var onAudioBuffer: (@Sendable (_ buffer: AVAudioPCMBuffer) -> Void)?
+    public var onAudioSamples: (@Sendable (_ samples: [Float]) -> Void)?
 
-    public init() {}
+    private let resampler: AudioResampler
+
+    public init(resampler: AudioResampler = AudioResampler()) {
+        self.resampler = resampler
+    }
 
     public func requestPermission() async -> Bool {
         await withCheckedContinuation { continuation in
@@ -37,9 +39,9 @@ public final class AudioCaptureManager {
 
         let engine = AVAudioEngine()
         let inputNode = engine.inputNode
-        
+
         _ = inputNode.inputFormat(forBus: 0)
-        
+
         let format = inputNode.outputFormat(forBus: 0)
         guard format.sampleRate > 0, format.channelCount > 0 else {
             throw AudioCaptureError.noInputDevice
@@ -47,14 +49,12 @@ public final class AudioCaptureManager {
 
         Self.logger.info("Audio format: \(format.sampleRate)Hz, \(format.channelCount) ch")
 
-        let callback = onAudioBuffer
-        let queue = callbackQueue
-        
-        inputNode.installTap(onBus: 0, bufferSize: bufferSize, format: nil) { [weak self] buffer, _ in
-            guard self != nil else { return }
-            queue.async {
-                callback?(buffer)
-            }
+        let capturedResampler = resampler
+        let capturedCallback = onAudioSamples
+
+        inputNode.installTap(onBus: 0, bufferSize: bufferSize, format: nil) { buffer, _ in
+            guard let samples = capturedResampler.resample(buffer) else { return }
+            capturedCallback?(samples)
         }
 
         engine.prepare()

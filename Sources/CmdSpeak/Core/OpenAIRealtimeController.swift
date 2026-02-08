@@ -1,5 +1,4 @@
 import AppKit
-@preconcurrency import AVFoundation
 import Foundation
 import os
 
@@ -29,7 +28,6 @@ public final class OpenAIRealtimeController {
     private let engine: OpenAIRealtimeEngine
     private let injector: TextInjector
     private let hotkeyManager: HotkeyManager
-    private let resampler: AudioResampler
 
     private var silenceTimer: Timer?
     private let silenceTimeout: TimeInterval
@@ -64,7 +62,6 @@ public final class OpenAIRealtimeController {
         self.hotkeyManager = HotkeyManager(
             doubleTapInterval: TimeInterval(config.hotkey.intervalMs) / 1000.0
         )
-        self.resampler = AudioResampler()
 
         setupCallbacks()
     }
@@ -84,9 +81,9 @@ public final class OpenAIRealtimeController {
             }
         }
 
-        audioCapture.onAudioBuffer = { [weak self] buffer in
+        audioCapture.onAudioSamples = { [weak self] samples in
             DispatchQueue.main.async {
-                self?.handleAudioBuffer(buffer)
+                self?.handleAudioSamples(samples)
             }
         }
 
@@ -481,13 +478,11 @@ public final class OpenAIRealtimeController {
         }
     }
 
-    private func handleAudioBuffer(_ buffer: AVAudioPCMBuffer) {
+    private func handleAudioSamples(_ samples: [Float]) {
         guard case .listening = state, currentSessionID != nil else { return }
 
-        guard let resampled = resampler.resample(buffer) else { return }
-
         if let continuation = audioBufferContinuation {
-            switch continuation.yield(resampled) {
+            switch continuation.yield(samples) {
             case .enqueued:
                 metricsCollector?.recordAudioBufferSent()
             case .dropped:
